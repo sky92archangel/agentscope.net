@@ -191,6 +191,12 @@ public static class OpenAIMessageConverter
             return textObj?.ToString() ?? string.Empty;
         }
 
+        // 处理 DataBlock 类型
+        if (msg.Content is DataBlock dataBlock)
+        {
+            return dataBlock.Text ?? string.Empty;
+        }
+
         // 否则序列化为JSON字符串
         // Otherwise serialize to JSON string
         return JsonSerializer.Serialize(msg.Content);
@@ -219,6 +225,12 @@ public static class OpenAIMessageConverter
             {
                 return true;
             }
+        }
+
+        // 检查 DataBlock 媒体来源
+        if (msg.Content is DataBlock { Sources: { Count: > 0 } })
+        {
+            return true;
         }
 
         return false;
@@ -300,7 +312,101 @@ public static class OpenAIMessageConverter
             }
         }
 
+        // 处理 DataBlock 来源（Text已在ExtractTextContent中处理，此处仅处理Sources）
+        AddDataBlockParts(parts, msg);
+
         return parts;
+    }
+
+    /// <summary>
+    /// 添加 DataBlock 的多媒体来源到内容部件列表
+    /// </summary>
+    private static void AddDataBlockParts(List<OpenAIMessageContent> parts, Msg msg)
+    {
+        if (msg.Content is not DataBlock dataBlock || dataBlock.Sources == null)
+            return;
+
+        foreach (var source in dataBlock.Sources)
+        {
+            switch (source)
+            {
+                case URLSource { MimeType: var mime, Url: var url }
+                    when mime?.StartsWith("image/") == true:
+                {
+                    var imageUrl = OpenAIConverterUtils.ConvertImageSourceToUrl(url);
+                    parts.Add(new OpenAIMessageContent
+                    {
+                        Type = "image_url",
+                        ImageUrl = new OpenAIImageUrl { Url = imageUrl }
+                    });
+                    break;
+                }
+
+                case URLSource { MimeType: var mime, Url: var url }
+                    when mime?.StartsWith("audio/") == true:
+                {
+                    var format = OpenAIConverterUtils.DetectAudioFormat(mime);
+                    parts.Add(new OpenAIMessageContent
+                    {
+                        Type = "input_audio",
+                        InputAudio = new OpenAIInputAudio { Data = url, Format = format }
+                    });
+                    break;
+                }
+
+                case URLSource { MimeType: var mime, Url: var url }
+                    when mime?.StartsWith("video/") == true:
+                {
+                    var videoUrl = OpenAIConverterUtils.ConvertVideoSourceToUrl(url);
+                    parts.Add(new OpenAIMessageContent
+                    {
+                        Type = "video_url",
+                        VideoUrl = new OpenAIVideoUrl { Url = videoUrl }
+                    });
+                    break;
+                }
+
+                case Base64Source { MediaType: var mediaType, Data: var data }
+                    when mediaType.StartsWith("image/"):
+                {
+                    parts.Add(new OpenAIMessageContent
+                    {
+                        Type = "image_url",
+                        ImageUrl = new OpenAIImageUrl
+                        {
+                            Url = $"data:{mediaType};base64,{data}"
+                        }
+                    });
+                    break;
+                }
+
+                case Base64Source { MediaType: var mediaType, Data: var data }
+                    when mediaType.StartsWith("audio/"):
+                {
+                    var format = OpenAIConverterUtils.DetectAudioFormat(mediaType);
+                    parts.Add(new OpenAIMessageContent
+                    {
+                        Type = "input_audio",
+                        InputAudio = new OpenAIInputAudio { Data = data, Format = format }
+                    });
+                    break;
+                }
+
+                case Base64Source { MediaType: var mediaType, Data: var data }
+                    when mediaType.StartsWith("video/"):
+                {
+                    parts.Add(new OpenAIMessageContent
+                    {
+                        Type = "video_url",
+                        VideoUrl = new OpenAIVideoUrl
+                        {
+                            Url = $"data:{mediaType};base64,{data}"
+                        }
+                    });
+                    break;
+                }
+            }
+        }
     }
 
     /// <summary>

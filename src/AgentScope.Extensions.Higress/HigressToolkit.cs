@@ -74,6 +74,7 @@ public sealed class HigressToolkit
 
         public string Name => _result.Name;
         public string Description => _result.Description ?? $"Higress 远程工具 {_result.Name}";
+        public bool IsExternal => false;
 
         public async Task<ToolResult> ExecuteAsync(Dictionary<string, object> parameters)
         {

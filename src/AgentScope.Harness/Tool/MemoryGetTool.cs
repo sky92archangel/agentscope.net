@@ -31,6 +31,7 @@ public sealed class MemoryGetTool : ITool
     }
 
     public string Name => "memory_get";
+    public bool IsExternal => false;
     public string Description => "从 Agent 记忆中检索最近的消息（可按关键词过滤）";
 
     public Task<ToolResult> ExecuteAsync(Dictionary<string, object> parameters)

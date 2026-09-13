@@ -29,7 +29,7 @@ using AnthropicContentBlock = AgentScope.Core.Formatter.Anthropic.Dto.AnthropicC
 using AnthropicUsage = AgentScope.Core.Formatter.Anthropic.Dto.AnthropicUsage;
 
 // Alias for GenerateOptions to avoid ambiguity
-using AnthropicGenerateOptions = AgentScope.Core.Formatter.Anthropic.GenerateOptions;
+using AnthropicGenerateOptions = AgentScope.Core.Formatter.GenerateOptions;
 
 namespace AgentScope.Core.Tests.Formatter.Anthropic;
 

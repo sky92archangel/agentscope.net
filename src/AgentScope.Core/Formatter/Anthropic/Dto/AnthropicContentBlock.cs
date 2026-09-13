@@ -44,6 +44,9 @@ public record TextBlock : AnthropicContentBlock
 
     [JsonPropertyName("text")]
     public required string Text { get; init; }
+
+    [JsonPropertyName("cache_control")]
+    public CacheControl? CacheControl { get; init; }
 }
 
 /// <summary>

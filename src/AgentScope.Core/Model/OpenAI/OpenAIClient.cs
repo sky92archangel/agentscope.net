@@ -245,11 +245,12 @@ public class OpenAIClient
     {
         var baseUri = string.IsNullOrEmpty(baseUrl) ? DefaultBaseUrl : baseUrl.TrimEnd('/');
         
-        // If baseUrl already ends with /v1, and endpoint starts with /v1, 
-        // remove the duplicate /v1 to handle OpenAI-compatible APIs like DashScope
-        // 如果 baseUrl 已以 /v1 结尾，且 endpoint 以 /v1 开头，
-        // 则移除重复的 /v1 以处理 DashScope 等 OpenAI 兼容 API
-        if (endpoint.StartsWith("/v1/") && baseUri.EndsWith("/v1"))
+        // If baseUrl already ends with a version segment (e.g. /v1, /v4), and endpoint
+        // starts with /v1, remove the duplicate /v1 to handle OpenAI-compatible APIs
+        // like DashScope (/v1) and GLM (/api/paas/v4)
+        // 如果 baseUrl 已以版本段结尾（如 /v1、/v4），且 endpoint 以 /v1 开头，
+        // 则移除重复的 /v1 以处理 DashScope、GLM 等 OpenAI 兼容 API
+        if (endpoint.StartsWith("/v1/") && System.Text.RegularExpressions.Regex.IsMatch(baseUri, "/v\\d+$"))
         {
             endpoint = endpoint.Substring(3); // Remove "/v1" prefix, keep the rest / 移除 "/v1" 前缀，保留其余部分
         }

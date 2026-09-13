@@ -43,6 +43,12 @@ public sealed class SseMcpClient : McpClientWrapper
     /// <summary>Request timeout / 请求超时时间</summary>
     private readonly TimeSpan _requestTimeout;
 
+    /// <summary>每个 HTTP 请求发送前的自定义回调（用于动态 token 注入）</summary>
+    private readonly Func<HttpRequestMessage, Task>? _httpRequestCustomizer;
+
+    /// <summary>覆盖的协议版本列表</summary>
+    private readonly List<string>? _protocolVersions;
+
     /// <summary>Monotonically increasing request ID / 单调递增的请求 ID</summary>
     private long _requestId;
 
@@ -58,12 +64,16 @@ public sealed class SseMcpClient : McpClientWrapper
     /// <param name="http">HTTP client (optional) / HTTP 客户端（可选）</param>
     /// <param name="apiKey">Bearer API key (optional) / Bearer API 密钥（可选）</param>
     /// <param name="requestTimeout">Request timeout (optional, default 30s) / 请求超时（可选，默认 30s）</param>
+    /// <param name="httpRequestCustomizer">Optional per-request customizer for dynamic token injection / 可选的请求级自定义回调，用于动态 token 注入</param>
+    /// <param name="protocolVersions">Optional protocol version override list / 可选的协议版本覆盖列表</param>
     public SseMcpClient(
         string name,
         string endpointUrl,
         HttpClient? http = null,
         string? apiKey = null,
-        TimeSpan? requestTimeout = null)
+        TimeSpan? requestTimeout = null,
+        Func<HttpRequestMessage, Task>? httpRequestCustomizer = null,
+        List<string>? protocolVersions = null)
     {
         _name = string.IsNullOrWhiteSpace(name)
             ? throw new ArgumentException("名称不能为空", nameof(name))
@@ -74,6 +84,8 @@ public sealed class SseMcpClient : McpClientWrapper
         _http = http ?? new HttpClient();
         _apiKey = apiKey;
         _requestTimeout = requestTimeout ?? TimeSpan.FromSeconds(30);
+        _httpRequestCustomizer = httpRequestCustomizer;
+        _protocolVersions = protocolVersions;
 
         // Set Bearer auth header if API key is provided / 如果提供了 API 密钥，设置 Bearer 认证头
         if (_apiKey != null)
@@ -90,14 +102,22 @@ public sealed class SseMcpClient : McpClientWrapper
     /// <param name="cancellationToken">Cancellation token / 取消令牌</param>
     public override async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
+        var protocolVersion = _protocolVersions?.FirstOrDefault() ?? "2025-03-26";
         var response = await SendJsonRpcAsync("initialize", new
         {
-            protocolVersion = "2025-03-26",
+            protocolVersion,
             capabilities = new { },
             clientInfo = new { name = "AgentScope.NET", version = "1.2.0" }
         }, cancellationToken).ConfigureAwait(false);
 
-        IsInitialized = response != null;
+        // 仅当响应含 result 且不含 error 时才算初始化成功（JSON-RPC error 响应非空字典）
+        IsInitialized = response != null
+            && response.ContainsKey("result")
+            && !response.ContainsKey("error");
+        if (!IsInitialized)
+        {
+            throw new InvalidOperationException("MCP initialize 失败：服务器返回错误响应");
+        }
     }
 
     /// <summary>
@@ -118,7 +138,9 @@ public sealed class SseMcpClient : McpClientWrapper
         // Parse the "tools" array from the result / 从结果中解析 "tools" 数组
         if (resultObj is JsonElement resultEl && resultEl.TryGetProperty("tools", out var toolsEl))
         {
-            var tools = JsonSerializer.Deserialize<List<McpToolSchema>>(toolsEl.GetRawText());
+            // MCP 服务器返回 camelCase 字段名，必须大小写不敏感反序列化
+            var tools = JsonSerializer.Deserialize<List<McpToolSchema>>(toolsEl.GetRawText(),
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
             return (IReadOnlyList<McpToolSchema>)(tools ?? new List<McpToolSchema>());
         }
 
@@ -211,6 +233,10 @@ public sealed class SseMcpClient : McpClientWrapper
 
         try
         {
+            if (_httpRequestCustomizer != null)
+            {
+                await _httpRequestCustomizer(httpRequest).ConfigureAwait(false);
+            }
             using var httpResponse = await _http.SendAsync(httpRequest, cts.Token).ConfigureAwait(false);
             httpResponse.EnsureSuccessStatusCode();
 

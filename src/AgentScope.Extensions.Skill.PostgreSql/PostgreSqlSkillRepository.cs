@@ -65,6 +65,58 @@ CREATE TABLE IF NOT EXISTS skills (
         return names;
     }
 
+    /// <summary>
+    /// 写入或覆盖一条技能记录（UPSERT 语义）。
+    /// </summary>
+    public async Task SaveAsync(Skill skill, CancellationToken ct = default)
+    {
+        await using var conn = new NpgsqlConnection(_connectionString);
+        await conn.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand(
+            @"INSERT INTO skills (name, description, content, source)
+              VALUES (@n, @d, @c, @s)
+              ON CONFLICT (name) DO UPDATE SET
+                  description = EXCLUDED.description,
+                  content = EXCLUDED.content,
+                  source = EXCLUDED.source", conn);
+        cmd.Parameters.AddWithValue("n", skill.Name);
+        cmd.Parameters.AddWithValue("d", (object?)skill.Description ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("c", skill.Content);
+        cmd.Parameters.AddWithValue("s", (object?)skill.Source ?? DBNull.Value);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    /// <summary>
+    /// 删除指定名称的技能记录。
+    /// </summary>
+    public async Task DeleteAsync(string name, CancellationToken ct = default)
+    {
+        await using var conn = new NpgsqlConnection(_connectionString);
+        await conn.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand("DELETE FROM skills WHERE name = @n", conn);
+        cmd.Parameters.AddWithValue("n", name);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    /// <summary>
+    /// 获取全部技能记录（含完整 content）。
+    /// </summary>
+    public async Task<IReadOnlyList<Skill>> GetAllAsync(CancellationToken ct = default)
+    {
+        await using var conn = new NpgsqlConnection(_connectionString);
+        await conn.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand("SELECT name, description, content, source FROM skills ORDER BY name", conn);
+        var results = new List<Skill>();
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+            results.Add(new Skill(
+                reader.GetString(0),
+                reader.IsDBNull(1) ? "" : reader.GetString(1),
+                reader.GetString(2),
+                reader.IsDBNull(3) ? null : reader.GetString(3)));
+        return results;
+    }
+
     public async Task<bool> SkillExistsAsync(string name, CancellationToken ct = default)
     {
         await using var conn = new NpgsqlConnection(_connectionString);

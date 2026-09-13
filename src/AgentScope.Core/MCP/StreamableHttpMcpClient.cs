@@ -45,6 +45,12 @@ public sealed class StreamableHttpMcpClient : McpClientWrapper
     /// <summary>Request timeout duration / 请求超时时间</summary>
     private readonly TimeSpan _requestTimeout;
 
+    /// <summary>每个 HTTP 请求发送前的自定义回调（用于动态 token 注入）</summary>
+    private readonly Func<HttpRequestMessage, Task>? _httpRequestCustomizer;
+
+    /// <summary>覆盖的协议版本列表</summary>
+    private readonly List<string>? _protocolVersions;
+
     /// <summary>Monotonically increasing JSON-RPC request ID / 单调递增的 JSON-RPC 请求 ID</summary>
     private long _requestId;
 
@@ -65,12 +71,16 @@ public sealed class StreamableHttpMcpClient : McpClientWrapper
     /// <param name="baseUrl">Base URL of the MCP server / MCP 服务器的基础 URL</param>
     /// <param name="http">Optional HTTP client; creates a new one if not provided / 可选的 HTTP 客户端，未提供时创建新实例</param>
     /// <param name="requestTimeout">Optional request timeout; defaults to 30 seconds / 可选的请求超时时间，默认为 30 秒</param>
+    /// <param name="httpRequestCustomizer">Optional per-request customizer for dynamic token injection / 可选的请求级自定义回调，用于动态 token 注入</param>
+    /// <param name="protocolVersions">Optional protocol version override list / 可选的协议版本覆盖列表</param>
     /// <exception cref="ArgumentException">Thrown when name or baseUrl is null/empty / 名称为空或 URL 为空时抛出</exception>
     public StreamableHttpMcpClient(
         string name,
         string baseUrl,
         HttpClient? http = null,
-        TimeSpan? requestTimeout = null)
+        TimeSpan? requestTimeout = null,
+        Func<HttpRequestMessage, Task>? httpRequestCustomizer = null,
+        List<string>? protocolVersions = null)
     {
         _name = string.IsNullOrWhiteSpace(name)
             ? throw new ArgumentException("名称不能为空", nameof(name))
@@ -80,6 +90,8 @@ public sealed class StreamableHttpMcpClient : McpClientWrapper
             : baseUrl;
         _http = http ?? new HttpClient();
         _requestTimeout = requestTimeout ?? TimeSpan.FromSeconds(30);
+        _httpRequestCustomizer = httpRequestCustomizer;
+        _protocolVersions = protocolVersions;
     }
 
     /// <summary>
@@ -91,14 +103,22 @@ public sealed class StreamableHttpMcpClient : McpClientWrapper
     /// <param name="cancellationToken">Cancellation token / 取消令牌</param>
     public override async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
+        var protocolVersion = _protocolVersions?.FirstOrDefault() ?? "2025-03-26";
         var response = await SendJsonRpcAsync("initialize", new
         {
-            protocolVersion = "2025-03-26",
+            protocolVersion,
             capabilities = new { },
             clientInfo = new { name = "AgentScope.NET", version = "1.2.0" }
         }, cancellationToken).ConfigureAwait(false);
 
-        IsInitialized = response != null;
+        // 仅当响应含 result 且不含 error 时才算初始化成功（JSON-RPC error 响应非空字典）
+        IsInitialized = response != null
+            && response.ContainsKey("result")
+            && !response.ContainsKey("error");
+        if (!IsInitialized)
+        {
+            throw new InvalidOperationException("MCP initialize 失败：服务器返回错误响应");
+        }
     }
 
     /// <summary>
@@ -212,6 +232,10 @@ public sealed class StreamableHttpMcpClient : McpClientWrapper
 
         try
         {
+            if (_httpRequestCustomizer != null)
+            {
+                await _httpRequestCustomizer(httpRequest).ConfigureAwait(false);
+            }
             using var httpResponse = await _http.SendAsync(httpRequest, cts.Token).ConfigureAwait(false);
             // 从响应头中提取 session ID（服务器在首次 initialize 时返回）
             if (httpResponse.Headers.TryGetValues("mcp-session-id", out var sessionValues))

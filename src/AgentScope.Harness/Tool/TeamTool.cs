@@ -20,6 +20,7 @@ namespace AgentScope.Harness.Tool;
 public sealed class TeamTool(ITeamClient teamClient) : ITool
 {
     public string Name => "team";
+    public bool IsExternal => false;
     public string Description => "团队协作：创建任务、分配任务、发送消息";
 
     public async Task<ToolResult> ExecuteAsync(Dictionary<string, object> parameters)

@@ -118,6 +118,20 @@ public class ChatUsage
     public int OutputTokens { get; set; }
 
     /// <summary>
+    /// Gets or sets the number of cached input tokens (cache read).
+    /// 对应 Anthropic: cache_read_input_tokens
+    /// 获取或设置缓存读取的输入 Token 数量。
+    /// </summary>
+    public int? CachedInputTokens { get; set; }
+
+    /// <summary>
+    /// Gets or sets the number of cache creation input tokens.
+    /// 对应 Anthropic: cache_creation_input_tokens
+    /// 获取或设置缓存创建的输入 Token 数量。
+    /// </summary>
+    public int? CacheCreationInputTokens { get; set; }
+
+    /// <summary>
     /// Gets or sets the total number of tokens (input + output).
     /// 获取或设置总 Token 数量（输入＋输出）。
     /// </summary>

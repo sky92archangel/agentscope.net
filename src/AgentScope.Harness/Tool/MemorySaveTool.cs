@@ -20,6 +20,7 @@ namespace AgentScope.Harness.Tool;
 public sealed class MemorySaveTool(ILongTermMemory memory) : ITool
 {
     public string Name => "memory_save";
+    public bool IsExternal => false;
     public string Description => "保存信息到长期记忆";
 
     public async Task<ToolResult> ExecuteAsync(Dictionary<string, object> parameters)

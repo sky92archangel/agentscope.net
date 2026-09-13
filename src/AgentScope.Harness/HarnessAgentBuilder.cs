@@ -54,6 +54,8 @@ public sealed class HarnessAgentBuilder
     private Memory.MemoryConsolidator? _consolidator;
     private Skill.Curator.SkillUsageStore? _skillUsageStore;
     private Skill.Curator.SkillCurator? _skillCurator;
+    private bool _disableWebTools;
+    private HttpClient? _webHttpClient;
 
     /// <summary>Sets the agent name. / 设置 Agent 名称。</summary>
     public HarnessAgentBuilder WithName(string name) { _name = name; return this; }
@@ -121,6 +123,11 @@ public sealed class HarnessAgentBuilder
     /// </summary>
     public HarnessAgentBuilder WithSkillCurator(Skill.Curator.SkillCurator curator)
     { _skillCurator = curator; return this; }
+
+    /// <summary>Disables web tools (web_fetch, web_search). / 禁用网络工具。</summary>
+    public HarnessAgentBuilder WithDisableWebTools(bool disable = true) { _disableWebTools = disable; return this; }
+    /// <summary>Sets a custom HttpClient for web tools. / 设置网络工具的自定义 HttpClient。</summary>
+    public HarnessAgentBuilder WithWebHttpClient(HttpClient client) { _webHttpClient = client; return this; }
 
     /// <summary>
     /// Configures a default sandboxed filesystem rooted at the given or current directory.
@@ -216,16 +223,49 @@ public sealed class HarnessAgentBuilder
             }
         }
 
+        // 注册网络工具（web_fetch, web_search）
+        // Register web tools (unless disabled)
+        _toolkit ??= new Toolkit();
+        if (!_disableWebTools)
+        {
+            if (_toolkit.Resolve("web_fetch") == null)
+            {
+                var webTools = _webHttpClient != null
+                    ? new Tool.WebTools(_webHttpClient)
+                    : new Tool.WebTools();
+                _toolkit.AddTool(webTools);
+            }
+            if (_toolkit.Resolve("web_search") == null)
+            {
+                var searchTool = _webHttpClient != null
+                    ? new Tool.WebSearchTool(_webHttpClient)
+                    : new Tool.WebSearchTool();
+                _toolkit.AddTool(searchTool);
+            }
+        }
+
+        // 自动注册 reset_equipped_tools 元工具 (如果有工具组)
+        // Auto-register meta tool if any groups exist
+        if (_toolkit != null && _toolkit.Groups.Count > 0)
+            _toolkit.RegisterMetaTool();
+
+        // 深拷贝 Toolkit 以隔离 Agent 状态
+        // Deep copy the toolkit for agent state isolation
+        var isolatedToolkit = _toolkit?.DeepCopy();
+
         // 构建 EnhancedReActAgent // Build the inner EnhancedReActAgent
         var innerBuilder = new EnhancedReActAgentBuilder()
             .Name(_name)
             .SysPrompt(_systemPrompt ?? "You are a helpful AI assistant.")
             .Model(_model ?? throw new InvalidOperationException("必须指定模型"));
 
-        if (_toolkit != null)
+        if (isolatedToolkit != null)
         {
-            foreach (var tool in _toolkit.AllTools)
+            foreach (var tool in isolatedToolkit.AllTools)
                 innerBuilder.AddTool(tool);
+
+            // 传递 ToolGroupManager 以支持组过滤
+            innerBuilder.ToolGroupManager(isolatedToolkit.GetGroupManager());
         }
         if (_permission != null) innerBuilder.PermissionEngine(_permission);
         innerBuilder.MaxIterations(_maxIterations);

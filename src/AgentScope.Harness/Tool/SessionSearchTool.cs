@@ -31,6 +31,7 @@ public sealed class SessionSearchTool : ITool
     }
 
     public string Name => "session_search";
+    public bool IsExternal => false;
     public string Description => "在会话转录中按关键词检索历史段落";
 
     public async Task<ToolResult> ExecuteAsync(Dictionary<string, object> parameters)

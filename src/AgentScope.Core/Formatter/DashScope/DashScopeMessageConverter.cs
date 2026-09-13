@@ -78,7 +78,13 @@ public static class DashScopeMessageConverter
         }
 
         var contents = new List<DashScopeContentPart>();
-        var textContent = msg.GetTextContent();
+
+        // 处理 DataBlock 文本（GetTextContent 不识别 DataBlock）
+        string textContent;
+        if (msg.Content is DataBlock dbText)
+            textContent = dbText.Text ?? "";
+        else
+            textContent = msg.GetTextContent() ?? "";
 
         // Add text content if present
         if (!string.IsNullOrEmpty(textContent))
@@ -93,6 +99,46 @@ public static class DashScopeMessageConverter
             foreach (var url in urls)
             {
                 contents.Add(DashScopeContentPart.FromImage(url));
+            }
+        }
+
+        // 处理 DataBlock 来源
+        if (msg.Content is DataBlock dataBlock && dataBlock.Sources != null)
+        {
+            foreach (var source in dataBlock.Sources)
+            {
+                switch (source)
+                {
+                    case URLSource { MimeType: var mime, Url: var url }
+                        when mime?.StartsWith("image/") == true:
+                        contents.Add(DashScopeContentPart.FromImage(url));
+                        break;
+
+                    case URLSource { MimeType: var mime, Url: var url }
+                        when mime?.StartsWith("audio/") == true:
+                        contents.Add(DashScopeContentPart.FromAudio(url));
+                        break;
+
+                    case URLSource { MimeType: var mime, Url: var url }
+                        when mime?.StartsWith("video/") == true:
+                        contents.Add(DashScopeContentPart.FromVideo(url));
+                        break;
+
+                    case Base64Source { MediaType: var mt, Data: var data }
+                        when mt.StartsWith("image/"):
+                        contents.Add(DashScopeContentPart.FromImage($"data:{mt};base64,{data}"));
+                        break;
+
+                    case Base64Source { MediaType: var mt, Data: var data }
+                        when mt.StartsWith("audio/"):
+                        contents.Add(DashScopeContentPart.FromAudio($"data:{mt};base64,{data}"));
+                        break;
+
+                    case Base64Source { MediaType: var mt, Data: var data }
+                        when mt.StartsWith("video/"):
+                        contents.Add(DashScopeContentPart.FromVideo($"data:{mt};base64,{data}"));
+                        break;
+                }
             }
         }
 
@@ -249,6 +295,12 @@ public static class DashScopeMessageConverter
         if (msg.Metadata?.ContainsKey("image_urls") == true ||
             msg.Metadata?.ContainsKey("audio_urls") == true ||
             msg.Metadata?.ContainsKey("video_urls") == true)
+        {
+            return true;
+        }
+
+        // 检查 DataBlock 媒体来源
+        if (msg.Content is DataBlock { Sources: { Count: > 0 } })
         {
             return true;
         }

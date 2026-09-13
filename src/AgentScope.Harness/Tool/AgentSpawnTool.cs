@@ -28,6 +28,7 @@ public sealed class AgentSpawnTool(ISubagentManager subagentManager) : ITool
 {
     /// <inheritdoc />
     public string Name => "spawn_agent";
+    public bool IsExternal => false;
 
     /// <inheritdoc />
     public string Description => "生成一个子 Agent 执行独立任务";

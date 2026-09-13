@@ -36,6 +36,18 @@ public sealed class McpClientBuilder
     private HttpClient? _httpClient;
     private TimeSpan? _requestTimeout;
 
+    /// <summary>
+    /// 每个 HTTP 请求的自定义回调（用于动态 token/OAuth 刷新等）。
+    /// 对应 Java: McpClientBuilder.httpRequestCustomizer
+    /// </summary>
+    private Func<HttpRequestMessage, Task>? _httpRequestCustomizer;
+
+    /// <summary>
+    /// 覆盖协商的协议版本列表（默认按 SDK 内置版本）。
+    /// 对应 Java: McpClientBuilder.protocolVersionsOverride
+    /// </summary>
+    private List<string>? _protocolVersions;
+
     private McpClientBuilder()
     {
     }
@@ -149,6 +161,30 @@ public sealed class McpClientBuilder
     }
 
     /// <summary>
+    /// 设置每个 HTTP 请求的自定义回调（用于动态 token/OAuth 刷新等）。
+    /// 对应 Java: McpClientBuilder.httpRequestCustomizer
+    /// </summary>
+    /// <param name="customizer">在每个 HTTP 请求发送前调用的异步委托</param>
+    /// <returns>The builder instance for chaining / 用于链式调用的构建器实例</returns>
+    public McpClientBuilder WithHttpRequestCustomizer(Func<HttpRequestMessage, Task> customizer)
+    {
+        _httpRequestCustomizer = customizer ?? throw new ArgumentNullException(nameof(customizer));
+        return this;
+    }
+
+    /// <summary>
+    /// 设置覆盖协商的协议版本列表。
+    /// 对应 Java: McpClientBuilder.protocolVersionsOverride
+    /// </summary>
+    /// <param name="versions">协议版本列表（例如 ["2025-03-26", "2024-11-05"]）</param>
+    /// <returns>The builder instance for chaining / 用于链式调用的构建器实例</returns>
+    public McpClientBuilder WithProtocolVersions(List<string> versions)
+    {
+        _protocolVersions = versions ?? throw new ArgumentNullException(nameof(versions));
+        return this;
+    }
+
+    /// <summary>
     /// Builds and returns the IMcpClient instance based on the configured transport.
     /// 根据配置的传输方式构建并返回 IMcpClient 实例。
     /// </summary>
@@ -181,14 +217,18 @@ public sealed class McpClientBuilder
                 name,
                 _url ?? throw new InvalidOperationException("Streamable HTTP transport requires a URL / Streamable HTTP 传输需要指定 URL"),
                 _httpClient,
-                _requestTimeout),
+                _requestTimeout,
+                _httpRequestCustomizer,
+                _protocolVersions),
 
             TransportKind.Sse => new SseMcpClient(
                 name,
                 _url ?? throw new InvalidOperationException("SSE transport requires a URL / SSE 传输需要指定 URL"),
                 _httpClient,
                 _apiKey,
-                _requestTimeout),
+                _requestTimeout,
+                _httpRequestCustomizer,
+                _protocolVersions),
 
             _ => throw new InvalidOperationException($"Unsupported transport kind: {_transportKind} / 不支持的传输方式: {_transportKind}")
         };

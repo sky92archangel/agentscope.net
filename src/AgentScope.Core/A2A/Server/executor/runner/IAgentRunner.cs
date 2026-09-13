@@ -57,8 +57,9 @@ public abstract class BaseReActAgentRunner : IAgentRunner
     /// <summary>
     /// 为请求流式执行。对标 Java BaseReActAgentRunner.stream。
     /// 每个 taskId 同一时刻只允许一个 Agent；执行结束后从缓存移除。
+    /// 子类可重写此方法以添加转换逻辑（如 delta→artifact）。
     /// </summary>
-    public async IAsyncEnumerable<Event> StreamAsync(
+    public virtual async IAsyncEnumerable<Event> StreamAsync(
         IReadOnlyList<Msg> messages, AgentRequestOptions options,
         [EnumeratorCancellation] CancellationToken ct = default)
     {

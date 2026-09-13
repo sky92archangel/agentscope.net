@@ -156,6 +156,9 @@ public class ToolGroupRuntimeIntegrationTests
     /// </summary>
     private sealed class CapturingScriptedModel : IModel
     {
+        // 默认不支持原生结构化输出（接口成员实现）
+        public bool SupportsNativeStructuredOutput => false;
+        public bool SupportsNativeStructuredOutputWithTools => false;
         private readonly Queue<string> _responses;
 
         public CapturingScriptedModel(params string[] responses)

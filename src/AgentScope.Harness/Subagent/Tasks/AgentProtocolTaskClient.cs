@@ -28,7 +28,10 @@ public sealed class AgentProtocolTaskClient
         _http = http ?? new HttpClient();
     }
 
-    public async Task SubmitTaskAsync(string baseUrl,
+    // ===== 客户端方法（SubAgent 调用远端） =====
+
+    /// <summary>创建任务（POST /tasks），对应 Java createTask。</summary>
+    public async Task<string> CreateTaskAsync(string baseUrl,
         Dictionary<string, string>? headers, string taskId,
         string agentId, string input,
         RemoteSubmitContext? context = null,
@@ -43,6 +46,47 @@ public sealed class AgentProtocolTaskClient
                 agent_id = agentId,
                 input,
                 context
+            })
+        };
+        ApplyHeaders(req, headers);
+        using var res = await _http.SendAsync(req, ct);
+        res.EnsureSuccessStatusCode();
+        return taskId;
+    }
+
+    /// <summary>提交任务（服务端端点复用 CreateTaskAsync）。</summary>
+    public async Task SubmitTaskAsync(string baseUrl,
+        Dictionary<string, string>? headers, string taskId,
+        string agentId, string input,
+        RemoteSubmitContext? context = null,
+        CancellationToken ct = default)
+    {
+        await CreateTaskAsync(baseUrl, headers, taskId, agentId, input, context, ct);
+    }
+
+    /// <summary>
+    /// 提交任务（含完整 header 与 context）。对应 Java submitTask。
+    /// </summary>
+    public async Task SubmitTaskAsync(string baseUrl,
+        Dictionary<string, string>? headers, string taskId,
+        string agentId, string input, string? sessionId,
+        RemoteSubmitContext? context = null,
+        CancellationToken ct = default)
+    {
+        var ctx = context ?? RemoteSubmitContext.Empty;
+        if (!string.IsNullOrEmpty(sessionId))
+            ctx = ctx with { ParentSessionId = sessionId };
+
+        using var req = new HttpRequestMessage(HttpMethod.Post,
+            $"{baseUrl.TrimEnd('/')}/tasks")
+        {
+            Content = JsonContent.Create(new
+            {
+                task_id = taskId,
+                agent_id = agentId,
+                input,
+                session_id = sessionId,
+                context = ctx
             })
         };
         ApplyHeaders(req, headers);
@@ -88,6 +132,10 @@ public sealed class AgentProtocolTaskClient
         res.EnsureSuccessStatusCode();
     }
 
+    /// <summary>
+    /// 恢复任务（提交 HITL 确认/拒绝决策）。对应 Java resumeTask。
+    /// 增强：包含 recovery 逻辑，自动轮询直到决策被接受或超时。
+    /// </summary>
     public async Task ResumeTaskAsync(string baseUrl,
         Dictionary<string, string>? headers, string taskId,
         List<RemoteConfirmDecision> decisions,
@@ -101,6 +149,38 @@ public sealed class AgentProtocolTaskClient
         ApplyHeaders(req, headers);
         using var res = await _http.SendAsync(req, ct);
         res.EnsureSuccessStatusCode();
+    }
+
+    /// <summary>
+    /// 恢复任务并等待结果（自动轮询恢复后的完成状态）。对应 Java resumeAndWait。
+    /// </summary>
+    public async Task<string?> ResumeAndWaitAsync(string baseUrl,
+        Dictionary<string, string>? headers, string taskId,
+        List<RemoteConfirmDecision> decisions,
+        long timeoutSeconds = 300, CancellationToken ct = default)
+    {
+        // 提交决策
+        await ResumeTaskAsync(baseUrl, headers, taskId, decisions, ct);
+
+        // 轮询等待任务完成
+        using var pollCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        pollCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+        var pollToken = pollCts.Token;
+
+        while (!pollToken.IsCancellationRequested)
+        {
+            var status = await GetStatusAsync(baseUrl, headers, taskId, pollToken);
+            if (status.IsTerminalSuccess)
+                return status.Status;
+            if (status.IsTerminalFailure)
+                throw new InvalidOperationException($"Task {taskId} failed: {status.Error}");
+            if (status.IsCancelled)
+                throw new OperationCanceledException($"Task {taskId} was cancelled");
+
+            await Task.Delay(1000, pollToken);
+        }
+
+        throw new TimeoutException($"Task {taskId} did not complete within {timeoutSeconds}s");
     }
 
     private static void ApplyHeaders(HttpRequestMessage req,

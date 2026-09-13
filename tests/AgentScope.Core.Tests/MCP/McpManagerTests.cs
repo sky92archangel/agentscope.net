@@ -214,6 +214,9 @@ public class McpManagerTests
     /// </summary>
     private sealed class ScriptedModel : IModel
     {
+        // 默认不支持原生结构化输出（接口成员实现）
+        public bool SupportsNativeStructuredOutput => false;
+        public bool SupportsNativeStructuredOutputWithTools => false;
         private readonly Queue<string> _responses;
 
         public ScriptedModel(params string[] responses)

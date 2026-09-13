@@ -23,6 +23,7 @@ namespace AgentScope.Harness.Tool;
 public sealed class ShellExecuteTool : ITool
 {
     public string Name => "shell_execute";
+    public bool IsExternal => false;
     public string Description => "在沙箱中执行 shell 命令并获取输出";
 
     public async Task<ToolResult> ExecuteAsync(Dictionary<string, object> parameters)

@@ -66,4 +66,7 @@ public record AnthropicSystemMessage
 
     [JsonPropertyName("text")]
     public required string Text { get; init; }
+
+    [JsonPropertyName("cache_control")]
+    public CacheControl? CacheControl { get; init; }
 }

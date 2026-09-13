@@ -26,8 +26,6 @@ using AgentScope.Core.Formatter.Anthropic;
 using AgentScope.Core.Formatter.Anthropic.Dto;
 using AgentScope.Core.Message;
 
-using GenerateOptions = AgentScope.Core.Formatter.Anthropic.GenerateOptions;
-
 namespace AgentScope.Core.Model.Anthropic;
 
 /// <summary>
@@ -44,6 +42,16 @@ namespace AgentScope.Core.Model.Anthropic;
 /// </summary>
 public class AnthropicModel : ModelBase, IStreamingChatModel
 {
+    /// <summary>
+    /// Anthropic Claude 3+ 支持原生结构化输出（thinking 模式 JSON Schema）。
+    /// </summary>
+    public override bool SupportsNativeStructuredOutput => true;
+
+    /// <summary>
+    /// Anthropic 不支持 tools 与 response_format 同时使用。
+    /// </summary>
+    public override bool SupportsNativeStructuredOutputWithTools => false;
+
     /// <summary>
     /// Default base URL for the Anthropic API.
     /// Anthropic API 的默认基础地址。
@@ -90,7 +98,7 @@ public class AnthropicModel : ModelBase, IStreamingChatModel
     /// Default generation options applied to all requests (can be overridden per-request).
     /// 应用于所有请求的默认生成选项（可在每次请求时覆盖）。
     /// </summary>
-    private readonly GenerateOptions? _defaultOptions;
+    private readonly global::AgentScope.Core.Formatter.GenerateOptions? _defaultOptions;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AnthropicModel"/> class.
@@ -106,7 +114,7 @@ public class AnthropicModel : ModelBase, IStreamingChatModel
         string? apiKey = null,
         string? baseUrl = null,
         AnthropicChatFormatter? formatter = null,
-        GenerateOptions? defaultOptions = null)
+        global::AgentScope.Core.Formatter.GenerateOptions? defaultOptions = null)
         : base(modelName)
     {
         _modelName = modelName ?? throw new ArgumentNullException(nameof(modelName));
@@ -189,11 +197,11 @@ public class AnthropicModel : ModelBase, IStreamingChatModel
     /// <returns>Async enumerable of ChatResponse chunks / ChatResponse 块的异步可枚举序列。</returns>
     public async IAsyncEnumerable<ChatResponse> GenerateStreamAsync(
         List<Msg> messages,
-        GenerateOptions? options = null,
+        global::AgentScope.Core.Formatter.GenerateOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var mergedOptions = MergeOptions(options, _defaultOptions);
-        mergedOptions ??= new GenerateOptions();
+        mergedOptions ??= new global::AgentScope.Core.Formatter.GenerateOptions();
         mergedOptions.Stream = true;
 
         // Step 1: Format messages into Anthropic request format with streaming enabled
@@ -267,12 +275,12 @@ public class AnthropicModel : ModelBase, IStreamingChatModel
     /// <param name="options">Request-specific options / 请求特定选项。</param>
     /// <param name="defaults">Default options / 默认选项。</param>
     /// <returns>Merged options or null if both are null / 合并后的选项，如果两者都为空则返回 null。</returns>
-    private GenerateOptions? MergeOptions(GenerateOptions? options, GenerateOptions? defaults)
+    private global::AgentScope.Core.Formatter.GenerateOptions? MergeOptions(global::AgentScope.Core.Formatter.GenerateOptions? options, global::AgentScope.Core.Formatter.GenerateOptions? defaults)
     {
         if (options == null) return defaults;
         if (defaults == null) return options;
 
-        var merged = new GenerateOptions
+        var merged = new global::AgentScope.Core.Formatter.GenerateOptions
         {
             Temperature = options.Temperature ?? defaults.Temperature,
             MaxTokens = options.MaxTokens ?? defaults.MaxTokens,
@@ -287,18 +295,18 @@ public class AnthropicModel : ModelBase, IStreamingChatModel
     }
 
     /// <summary>
-    /// Converts a Dictionary&lt;string, object&gt; options map to a strongly-typed GenerateOptions.
+    /// Converts a Dictionary&lt;string, object&gt; options map to a strongly-typed global::AgentScope.Core.Formatter.GenerateOptions.
     /// Supports Anthropic-specific options like topK and thinkingBudget.
-    /// 将 Dictionary&lt;string, object&gt; 选项字典转换为强类型的 GenerateOptions。
+    /// 将 Dictionary&lt;string, object&gt; 选项字典转换为强类型的 global::AgentScope.Core.Formatter.GenerateOptions。
     /// 支持 Anthropic 特定选项如 topK 和 thinkingBudget。
     /// </summary>
     /// <param name="options">Raw options dictionary / 原始选项字典。</param>
-    /// <returns>Converted GenerateOptions or null / 转换后的 GenerateOptions 或 null。</returns>
-    private GenerateOptions? ConvertOptions(Dictionary<string, object>? options)
+    /// <returns>Converted global::AgentScope.Core.Formatter.GenerateOptions or null / 转换后的 global::AgentScope.Core.Formatter.GenerateOptions 或 null。</returns>
+    private global::AgentScope.Core.Formatter.GenerateOptions? ConvertOptions(Dictionary<string, object>? options)
     {
         if (options == null) return null;
 
-        var result = new GenerateOptions();
+        var result = new global::AgentScope.Core.Formatter.GenerateOptions();
 
         if (options.TryGetValue("temperature", out var temp) && temp is double tempValue)
             result.Temperature = tempValue;

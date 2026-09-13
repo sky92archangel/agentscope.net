@@ -110,6 +110,14 @@ public record ToolResultBlock : ContentBlock
     public bool IsError { get; set; }
 
     /// <summary>
+    /// Indicates whether this result is a suspension signal for an external tool.
+    /// When true, the Agent should pause the ReAct loop and wait for external execution.
+    /// 指示此结果是否为外部工具的挂起信号。
+    /// 为 true 时，Agent 应暂停 ReAct 循环并等待外部执行。
+    /// </summary>
+    public bool IsSuspended { get; set; }
+
+    /// <summary>
     /// Name of the tool that produced this result.
     /// Used for eviction filtering by tool name, telemetry categorization, etc.
     /// Corresponds to Java: ToolResultBlock.getName()

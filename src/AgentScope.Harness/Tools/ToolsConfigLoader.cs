@@ -13,15 +13,66 @@
 // limitations under the License.
 
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace AgentScope.Harness.Tools;
 
 public static class ToolsConfigLoader
 {
+    private static readonly JsonSerializerOptions JsonOpts = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+        PropertyNameCaseInsensitive = true,
+        ReadCommentHandling = JsonCommentHandling.Skip,
+        AllowTrailingCommas = true
+    };
+
+    /// <summary>
+    /// 从 JSON 文件加载工具配置（含 mcpServers）。
+    /// </summary>
     public static async Task<ToolsConfig> LoadAsync(string path, CancellationToken ct = default)
     {
         if (!File.Exists(path)) return new ToolsConfig();
         var json = await File.ReadAllTextAsync(path, ct);
-        return JsonSerializer.Deserialize<ToolsConfig>(json) ?? new ToolsConfig();
+
+        // 尝试直接反序列化
+        var config = JsonSerializer.Deserialize<ToolsConfig>(json, JsonOpts) ?? new ToolsConfig();
+
+        // 尝试扩展解析：提取顶级 mcpServers 对象（标准 MCP 配置格式）
+        // mcpServers 是对象，每个 key 是一个 server 名
+        if (config.McpServers.Count == 0)
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("mcpServers", out var serversEl) ||
+                doc.RootElement.TryGetProperty("mcp_servers", out serversEl))
+            {
+                foreach (var serverProp in serversEl.EnumerateObject())
+                {
+                    var name = serverProp.Name;
+                    var svr = serverProp.Value;
+                    var transport = svr.TryGetProperty("transport", out var t) ? t.GetString() ?? "stdio" : "stdio";
+                    var command = svr.TryGetProperty("command", out var c) ? c.GetString() : null;
+                    var url = svr.TryGetProperty("url", out var u) ? u.GetString() : null;
+
+                    string[]? args = null;
+                    if (svr.TryGetProperty("args", out var argsEl))
+                    {
+                        args = argsEl.EnumerateArray().Select(a => a.GetString() ?? "").ToArray();
+                    }
+
+                    Dictionary<string, string>? env = null;
+                    if (svr.TryGetProperty("env", out var envEl))
+                    {
+                        env = new Dictionary<string, string>();
+                        foreach (var e in envEl.EnumerateObject())
+                            env[e.Name] = e.Value.GetString() ?? "";
+                    }
+
+                    config.McpServers.Add(new McpServerConfig(name, transport, command, args, url, env));
+                }
+            }
+        }
+
+        return config;
     }
 }

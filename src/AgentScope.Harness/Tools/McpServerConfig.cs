@@ -14,4 +14,13 @@
 
 namespace AgentScope.Harness.Tools;
 
-public sealed record McpServerConfig(string Name, string Command, string[]? Args = null, Dictionary<string, string>? Env = null);
+/// <summary>
+/// MCP 服务器配置。对标 Java McpServerConfig。
+/// </summary>
+public sealed record McpServerConfig(
+    string Name,
+    string Transport = "stdio",
+    string? Command = null,
+    string[]? Args = null,
+    string? Url = null,
+    Dictionary<string, string>? Env = null);

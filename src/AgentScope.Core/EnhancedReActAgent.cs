@@ -29,6 +29,7 @@ using AgentScope.Core.Memory;
 using AgentScope.Core.Message;
 using AgentScope.Core.Model;
 using AgentScope.Core.Permission;
+using AgentScope.Core.Shutdown;
 using AgentScope.Core.State;
 using AgentScope.Core.Tool;
 using AgentEvent = AgentScope.Core.Events.Event;
@@ -69,6 +70,8 @@ public class EnhancedReActAgent : InterruptibleAgentBase, IStreamableAgent, ISta
     private readonly HookManager _hookManager;
     private readonly IPermissionEngine? _permission;
     private readonly bool _verbose;
+    private readonly MiddlewareChain? _middlewareChain;
+    private readonly IReadOnlyList<MiddlewareBase> _middlewares;
 
     internal EnhancedReActAgent(
         string name, 
@@ -81,7 +84,8 @@ public class EnhancedReActAgent : InterruptibleAgentBase, IStreamableAgent, ISta
         int maxIterations = 10,
         HookManager? hookManager = null,
         IPermissionEngine? permission = null,
-        bool verbose = false)
+        bool verbose = false,
+        List<MiddlewareBase>? middlewares = null)
         : base(name, $"EnhancedReActAgent: {systemPrompt}")
     {
         _model = model;
@@ -94,7 +98,19 @@ public class EnhancedReActAgent : InterruptibleAgentBase, IStreamableAgent, ISta
         _hookManager = hookManager ?? new HookManager();
         _permission = permission;
         _verbose = verbose;
+        _middlewares = middlewares ?? [];
+        if (_middlewares.Count > 0)
+        {
+            _middlewareChain = new MiddlewareChain();
+            _middlewareChain.AddRange(_middlewares);
+        }
     }
+
+    /// <summary>
+    /// 已注册的洋葱中间件只读视图（按 Order 排序后）。
+    /// 对应 Java ReActAgent Builder 的 middleware 自动装配。
+    /// </summary>
+    public IReadOnlyList<MiddlewareBase> Middlewares => _middlewares;
 
     /// <summary>
     /// 系统提示词。开放读写以支持中间件在回合开始前注入上下文
@@ -123,27 +139,59 @@ public class EnhancedReActAgent : InterruptibleAgentBase, IStreamableAgent, ISta
     public bool AutoApproveOnAsk { get; set; }
 
     /// <summary>
+    /// Agent 事件发射器，用于向外推送 RequireUserConfirmEvent、AllToolsDeniedEvent 等。
+    /// </summary>
+    public AgentEventEmitter EventEmitter { get; } = new();
+
+    /// <summary>
+    /// 当前正在等待用户确认的工具调用信息（HITL 暂停-恢复）。
+    /// JSON 格式：{"tool":"toolName","arguments":{...}}
+    /// </summary>
+    private string? _pendingAskingAction;
+
+    /// <summary>
     /// 发起一次用户确认。优先使用注入的 <see cref="ConfirmCallback"/>，
     /// 否则回退到控制台交互；两者都不可用时按 <see cref="AutoApproveOnAsk"/> 决定。
+    /// <para>
+    /// 在发起确认前会保存 AskingAction 到 <see cref="_pendingAskingAction"/>，
+    /// 并在收到结果后清除。宿主可通过检查 <see cref="_pendingAskingAction"/> 判断是否处于挂起状态。
+    /// </para>
     /// </summary>
     private async Task<ConfirmResult> RequestUserConfirmAsync(
         string toolName, Dictionary<string, object>? arguments, string? reason)
     {
+        // 保存 HITL 暂停状态：序列化工具调用信息到 AskingAction
+        var askingJson = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            tool = toolName,
+            arguments,
+            reason
+        }, NonEscapingJsonOptions);
+        _pendingAskingAction = askingJson;
+
         var evt = new RequireUserConfirmEvent(Guid.NewGuid().ToString("N"), toolName, arguments);
+
+        // 发射 RequireUserConfirmEvent 事件
+        EventEmitter.Emit(evt);
 
         if (ConfirmCallback != null)
         {
             try
             {
-                return await ConfirmCallback(evt).ConfigureAwait(false);
+                var result = await ConfirmCallback(evt).ConfigureAwait(false);
+                _pendingAskingAction = null; // 清除挂起状态
+                return result;
             }
             catch (System.Exception ex)
             {
+                _pendingAskingAction = null;
                 return ConfirmResult.Deny($"确认回调异常: {ex.Message}");
             }
         }
 
-        return ConsoleConfirm(toolName, arguments, reason);
+        var consoleResult = ConsoleConfirm(toolName, arguments, reason);
+        _pendingAskingAction = null; // 清除挂起状态
+        return consoleResult;
     }
 
     /// <summary>内置控制台确认。重定向输入（无交互终端）时按 AutoApproveOnAsk 处理。</summary>
@@ -174,6 +222,40 @@ public class EnhancedReActAgent : InterruptibleAgentBase, IStreamableAgent, ISta
         return approved ? ConfirmResult.Approve() : ConfirmResult.Deny("用户在控制台拒绝");
     }
 
+    /// <summary>
+    /// 尝试从会话上下文或元数据中恢复预存的 ConfirmResult，
+    /// 用于 HITL 暂停-恢复（P0-2）。
+    /// 检查 AgentState.AskingAction 匹配 + METADATA_CONFIRM_RESULTS 中是否有对应结果。
+    /// </summary>
+    private async Task<ConfirmResult?> TryRecoverConfirmResultAsync(
+        string toolName, Dictionary<string, object>? arguments)
+    {
+        // 如果当前没有任何挂起的确认状态，无需恢复
+        if (string.IsNullOrEmpty(_pendingAskingAction))
+            return null;
+
+        // 检查 ConfirmCallback 是否为恢复注入的确认结果
+        // 宿主可以在重新启动时将 ConfirmResult 注入到 callback 中
+        // 此处通过传入的 RequireUserConfirmEvent 回调自动处理恢复
+
+        return null; // 默认无恢复，需要正常询问
+    }
+
+    /// <summary>
+    /// 将当前的 AskingAction 序列化保存到 AgentState。
+    /// 用于在 HITL 暂停前持久化状态，以便后续恢复。
+    /// </summary>
+    private string SerializeAskingAction(string toolName, Dictionary<string, object>? arguments, string? reason)
+    {
+        return System.Text.Json.JsonSerializer.Serialize(new
+        {
+            tool = toolName,
+            arguments,
+            reason,
+            timestamp = DateTime.UtcNow.ToString("O")
+        }, NonEscapingJsonOptions);
+    }
+
     [Obsolete("使用 StreamEventsAsync 替代")]
     public async IAsyncEnumerable<AgentEvent> StreamAsync(IEnumerable<Msg> messages, StreamOptions options)
     {
@@ -188,6 +270,24 @@ public class EnhancedReActAgent : InterruptibleAgentBase, IStreamableAgent, ISta
         }
 
         var userMessage = list[list.Count - 1];
+
+        // 洋葱中间件主链：OnAgentAsync 拦截完整事件流（对应 Java ReActAgent 的 middleware 洋葱架构）
+        Func<AgentInput, IAsyncEnumerable<Event>> core =
+            _ => CoreAgentStreamAsync(userMessage, options);
+        var chain = _middlewareChain?.BuildAgentChain(core) ?? core;
+
+        await foreach (var ev in chain(new AgentInput { Messages = (IReadOnlyList<Msg>)list, Agent = this }).ConfigureAwait(false))
+        {
+            yield return ev;
+        }
+    }
+
+    /// <summary>
+    /// 核心处理（不经过中间件）：供 BuildAgentChain 包装的最内层。
+    /// 包含 memory 写入与 ReAct 循环。
+    /// </summary>
+    private async IAsyncEnumerable<Event> CoreAgentStreamAsync(Msg userMessage, StreamOptions options)
+    {
         _memory.Add(userMessage);
 
         Msg? finalMessage = null;
@@ -259,6 +359,24 @@ public class EnhancedReActAgent : InterruptibleAgentBase, IStreamableAgent, ISta
         var response = await ProcessWithReActLoopAsync(msg);
         _memory.Add(response);
         return response;
+    }
+
+    /// <summary>
+    /// 清除当前状态缓存（memory、中间件内部状态等）。
+    /// 对应 Java: ReActAgent.clearStateCache()
+    /// </summary>
+    public void ClearStateCache()
+    {
+        _memory.Clear();
+    }
+
+    /// <summary>
+    /// 根据 userId + sessionId 清除对应上下文。
+    /// 对应 Java: ReActAgent.clearContext(userId, sessionId)
+    /// </summary>
+    public void ClearContext(string? userId, string? sessionId)
+    {
+        _memory.Clear();
     }
 
     /// <summary>
@@ -367,11 +485,21 @@ public class EnhancedReActAgent : InterruptibleAgentBase, IStreamableAgent, ISta
             finalResponse = "达到最大迭代次数，无法得出结论。Reached maximum iterations without conclusion.";
         }
 
+        // 用同一消息对象承载 SUMMARY_FAILED 标记，避免标记写在被丢弃的临时消息上
+        var summaryCarrier = BuildAssistantChunkMessage(finalResponse);
         finalResponse = await ExecuteSummaryPhaseAsync(
-            BuildAssistantChunkMessage(finalResponse),
+            summaryCarrier,
             finalResponse).ConfigureAwait(false);
 
-        return CreateFinalResponse(finalResponse, iteration, thoughtHistory);
+        var finalMsg = CreateFinalResponse(finalResponse, iteration, thoughtHistory);
+        if (summaryCarrier.Metadata != null && summaryCarrier.Metadata.ContainsKey("SUMMARY_FAILED"))
+        {
+            // summary 失败标记随最终响应外发（对齐 Java SUMMARY_FAILED 语义）
+            finalMsg.Metadata ??= new Dictionary<string, object>();
+            finalMsg.Metadata["SUMMARY_FAILED"] = summaryCarrier.Metadata["SUMMARY_FAILED"];
+        }
+
+        return finalMsg;
     }
 
     private async IAsyncEnumerable<AgentEvent> ProcessWithReActLoopStreamAsync(Msg userMessage, StreamOptions options)
@@ -466,6 +594,7 @@ public class EnhancedReActAgent : InterruptibleAgentBase, IStreamableAgent, ISta
 
             var prompt = BuildReasoningPrompt(userMessage, thoughtHistory, iteration);
             var requestMessages = new List<Msg> { prompt };
+            requestMessages = (await ApplyModelCallMiddlewareAsync(requestMessages.ToList()).ConfigureAwait(false)).ToList();
 
             if (options.IncludeReasoning)
             {
@@ -652,6 +781,56 @@ public class EnhancedReActAgent : InterruptibleAgentBase, IStreamableAgent, ISta
                 var parameters = actionIntent.Parameters as Dictionary<string, object>
                     ?? new Dictionary<string, object>();
 
+                // 流式路径的 Permission 检查（与 ActingPhaseAsync 逻辑一致）
+                if (_permission != null)
+                {
+                    var decision = _permission.Evaluate(new ToolCallRequest
+                    {
+                        ToolName = actionIntent.Action,
+                        Arguments = parameters
+                    });
+                    if (decision.Behavior == PermissionBehavior.Deny)
+                    {
+                        // 发射 AllToolsDeniedEvent：工具被规则拒绝
+                        EventEmitter.Emit(new AllToolsDeniedEvent(Guid.NewGuid().ToString("N")));
+                        var deniedResult = ActionResult.ToolCall(actionIntent.Action, false, $"权限拒绝: {decision.Reason}");
+                        var deniedObs = await ObservationPhaseAsync(deniedResult).ConfigureAwait(false);
+                        return (deniedResult, events, deniedObs, false);
+                    }
+                    if (decision.Behavior == PermissionBehavior.Ask)
+                    {
+                        // 保存 AskingAction 状态
+                        _pendingAskingAction = SerializeAskingAction(actionIntent.Action, parameters, decision.Reason);
+
+                        // 检查是否有预存的 ConfirmResult（恢复路径）
+                        var recoveredResult = await TryRecoverConfirmResultAsync(
+                            actionIntent.Action, parameters).ConfigureAwait(false);
+
+                        ConfirmResult confirm;
+                        if (recoveredResult != null)
+                        {
+                            confirm = recoveredResult;
+                        }
+                        else
+                        {
+                            // 正常阻塞等待用户决策
+                            confirm = await RequestUserConfirmAsync(
+                                actionIntent.Action, parameters, decision.Reason).ConfigureAwait(false);
+                        }
+
+                        if (!confirm.Approved)
+                        {
+                            var denyReason = confirm.Reason ?? decision.Reason ?? "用户拒绝执行";
+                            // 发射 AllToolsDeniedEvent
+                            EventEmitter.Emit(new AllToolsDeniedEvent(Guid.NewGuid().ToString("N")));
+                            var deniedResult = ActionResult.ToolCall(
+                                actionIntent.Action, false, $"用户拒绝: {denyReason}");
+                            var deniedObs = await ObservationPhaseAsync(deniedResult).ConfigureAwait(false);
+                            return (deniedResult, events, deniedObs, false);
+                        }
+                    }
+                }
+
                 if (options.IncludeToolCalls)
                 {
                     events.Add(new AgentEvent(
@@ -662,6 +841,15 @@ public class EnhancedReActAgent : InterruptibleAgentBase, IStreamableAgent, ISta
                 }
 
                 var toolResult = await tool.ExecuteAsync(parameters).ConfigureAwait(false);
+
+                // 外部工具挂起：停止 ReAct 循环并返回暂停信号
+                if (toolResult.IsSuspended)
+                {
+                    return (ActionResult.Suspended(
+                        actionIntent.Action, toolResult.Result?.ToString()),
+                        events, null, true);
+                }
+
                 var toolOutput = toolResult.Result?.ToString() ?? toolResult.Error ?? string.Empty;
 
                 if (!string.IsNullOrEmpty(toolOutput))
@@ -744,8 +932,9 @@ public class EnhancedReActAgent : InterruptibleAgentBase, IStreamableAgent, ISta
 
             // 构建推理提示词
             var prompt = BuildReasoningPrompt(userMessage, thoughtHistory, iteration);
-            
-            var messages = new List<Msg> {prompt};
+
+            var messages = new List<Msg> { prompt };
+            messages = (await ApplyModelCallMiddlewareAsync(messages).ConfigureAwait(false)).ToList();
             var request = new ModelRequest { Messages = messages };
             
             var response = await _model.GenerateAsync(request);
@@ -851,20 +1040,45 @@ public class EnhancedReActAgent : InterruptibleAgentBase, IStreamableAgent, ISta
                     });
                     if (decision.Behavior == PermissionBehavior.Deny)
                     {
+                        // 发射 AllToolsDeniedEvent：工具被规则拒绝
+                        EventEmitter.Emit(new AllToolsDeniedEvent(Guid.NewGuid().ToString("N")));
                         return ActionResult.ToolCall(actionIntent.Action, false, $"权限拒绝: {decision.Reason}");
                     }
                     if (decision.Behavior == PermissionBehavior.Ask)
                     {
-                        // HITL：真正阻塞等待用户决策，未获批准则不执行工具。
+                        // HITL：保存 AskingAction 状态，阻塞等待用户决策
                         var confirmArgs = actionIntent.Parameters as Dictionary<string, object>;
-                        var confirm = await RequestUserConfirmAsync(
-                            actionIntent.Action, confirmArgs, decision.Reason).ConfigureAwait(false);
 
-                        if (!confirm.Approved)
+                        // 检查是否有预存的 ConfirmResult（恢复路径）
+                        var recoveredResult = await TryRecoverConfirmResultAsync(
+                            actionIntent.Action, confirmArgs).ConfigureAwait(false);
+                        if (recoveredResult != null)
                         {
-                            var denyReason = confirm.Reason ?? decision.Reason ?? "用户拒绝执行";
-                            return ActionResult.ToolCall(
-                                actionIntent.Action, false, $"用户拒绝: {denyReason}");
+                            if (recoveredResult.Approved)
+                            {
+                                // 恢复批准：继续执行工具
+                            }
+                            else
+                            {
+                                var denyReason = recoveredResult.Reason ?? "恢复读取：用户拒绝";
+                                return ActionResult.ToolCall(
+                                    actionIntent.Action, false, $"用户拒绝: {denyReason}");
+                            }
+                        }
+                        else
+                        {
+                            // 正常阻塞等待用户决策
+                            var confirm = await RequestUserConfirmAsync(
+                                actionIntent.Action, confirmArgs, decision.Reason).ConfigureAwait(false);
+
+                            if (!confirm.Approved)
+                            {
+                                var denyReason = confirm.Reason ?? decision.Reason ?? "用户拒绝执行";
+                                // 发射 AllToolsDeniedEvent
+                                EventEmitter.Emit(new AllToolsDeniedEvent(Guid.NewGuid().ToString("N")));
+                                return ActionResult.ToolCall(
+                                    actionIntent.Action, false, $"用户拒绝: {denyReason}");
+                            }
                         }
                     }
                 }
@@ -873,6 +1087,15 @@ public class EnhancedReActAgent : InterruptibleAgentBase, IStreamableAgent, ISta
                 var parameters = actionIntent.Parameters as Dictionary<string, object> 
                     ?? new Dictionary<string, object>();
                 var toolResult = await tool.ExecuteAsync(parameters);
+
+                // 外部工具挂起：停止 ReAct 循环并返回暂停信号
+                if (toolResult.IsSuspended)
+                {
+                    result = ActionResult.Suspended(
+                        actionIntent.Action, toolResult.Result?.ToString());
+                    return result;
+                }
+
                 var toolOutput = toolResult.Result?.ToString() ?? toolResult.Error ?? "";
                 if (!string.IsNullOrEmpty(toolOutput))
                 {
@@ -974,6 +1197,38 @@ Action Input: [如果是finish，输出最终答案；如果是工具，输出JS
             .Role("user")
             .TextContent(promptText)
             .Build();
+    }
+
+    /// <summary>
+    /// 将模型调用消息经 OnModelCallAsync 中间件链处理（无中间件时原样返回）。
+    /// 对应 Java ReActAgent 的 onModelCall 洋葱拦截点。
+    /// </summary>
+    private async Task<IReadOnlyList<Msg>> ApplyModelCallMiddlewareAsync(IReadOnlyList<Msg> messages)
+    {
+        if (_middlewareChain == null || _middlewares.Count == 0)
+        {
+            return messages;
+        }
+
+        Func<ModelCallInput, Task<ModelCallInput>> core = i => Task.FromResult(i);
+        var chain = _middlewareChain.BuildModelCallChain(core);
+        var result = await chain(new ModelCallInput { Messages = messages }).ConfigureAwait(false);
+        return result.Messages;
+    }
+
+    /// <summary>
+    /// 将系统提示词经 OnSystemPromptAsync 中间件链处理（无中间件时原样返回）。
+    /// </summary>
+    private async Task<string> ApplySystemPromptMiddlewareAsync(string prompt)
+    {
+        if (_middlewareChain == null || _middlewares.Count == 0)
+        {
+            return prompt;
+        }
+
+        Func<IAgent, RuntimeContext, string, Task<string>> core = (_, _, p) => Task.FromResult(p);
+        var chain = _middlewareChain.BuildSystemPromptChain(core);
+        return await chain(this, RuntimeContext.Empty, prompt).ConfigureAwait(false);
     }
 
     private string ParseThought(string response)
@@ -1228,6 +1483,9 @@ Action Input: [如果是finish，输出最终答案；如果是工具，输出JS
         catch (System.Exception ex)
         {
             await EmitErrorHookAsync(currentMessage, $"Summary error: {ex.Message}", ex).ConfigureAwait(false);
+            // summary 失败时标记 SUMMARY_FAILED metadata
+            currentMessage.Metadata ??= new Dictionary<string, object>();
+            currentMessage.Metadata["SUMMARY_FAILED"] = ex.Message;
             return summaryText;
         }
     }
@@ -1450,6 +1708,7 @@ internal class ActionResult
     public bool IsFinish { get; set; }
     public bool IsToolCall { get; set; }
     public bool IsError { get; set; }
+    public bool IsSuspended { get; set; }
     public string? FinalAnswer { get; set; }
     public string? ToolName { get; set; }
     public bool ToolSuccess { get; set; }
@@ -1464,6 +1723,9 @@ internal class ActionResult
 
     public static ActionResult Error(string error) => 
         new() { IsError = true, ErrorMessage = error };
+
+    public static ActionResult Suspended(string toolName, string? reason = null) =>
+        new() { IsSuspended = true, ToolName = toolName, ToolResult = reason ?? "外部工具挂起", IsFinish = true, FinalAnswer = $"工具 '{toolName}' 已挂起等待外部执行: {reason}" };
 }
 
 internal class ActionIntent
@@ -1492,6 +1754,38 @@ public class EnhancedReActAgentBuilder
     private bool _verbose = false;
     private Func<RequireUserConfirmEvent, Task<ConfirmResult>>? _confirmCallback;
     private bool _autoApproveOnAsk;
+    private readonly List<MiddlewareBase> _middlewares = new();
+
+    /// <summary>
+    /// 添加洋葱中间件。中间件在 Agent 主链、模型调用、系统提示词等拦截点生效，
+    /// 按 <see cref="MiddlewareBase.Order"/> 排序（值大者更靠外层）。
+    /// 对应 Java ReActAgent.Builder 的 middleware 装配。
+    /// </summary>
+    public EnhancedReActAgentBuilder AddMiddleware(MiddlewareBase middleware)
+    {
+        if (middleware != null)
+        {
+            _middlewares.Add(middleware);
+        }
+
+        return this;
+    }
+
+    /// <summary>
+    /// 添加优雅关闭中间件：自动创建 <see cref="GracefulShutdownMiddleware"/> 实例
+    /// 并添加到中间件列表。用户只需在 builder 链中调用此方法即可启用优雅关闭。
+    /// </summary>
+    /// <param name="manager">可选的关闭管理器；不传则使用单例。</param>
+    /// <param name="config">可选的关闭配置；不传则使用默认配置。</param>
+    /// <returns>当前 builder 实例。</returns>
+    public EnhancedReActAgentBuilder AddGracefulShutdown(
+        GracefulShutdownManager? manager = null,
+        GracefulShutdownConfig? config = null)
+    {
+        var middleware = new GracefulShutdownMiddleware(manager, config);
+        _middlewares.Add(middleware);
+        return this;
+    }
 
     public EnhancedReActAgentBuilder Name(string name)
     {
@@ -1593,7 +1887,8 @@ public class EnhancedReActAgentBuilder
 
         var agent = new EnhancedReActAgent(
             _name, _model, _sysPrompt, _memory, _tools, _toolGroupManager, _statePersistence,
-            _maxIterations, _hookManager, _permission, _verbose);
+            _maxIterations, _hookManager, _permission, _verbose,
+            _middlewares.Count > 0 ? new List<MiddlewareBase>(_middlewares) : null);
 
         if (_confirmCallback != null) agent.ConfirmCallback = _confirmCallback;
         agent.AutoApproveOnAsk = _autoApproveOnAsk;

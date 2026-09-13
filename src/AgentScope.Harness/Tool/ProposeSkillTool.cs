@@ -34,6 +34,7 @@ public sealed class ProposeSkillTool : ITool
     }
 
     public string Name => "propose_skill";
+    public bool IsExternal => false;
     public string Description => "提议一个新技能草稿（Markdown），写入草稿目录待审批";
 
     public async Task<ToolResult> ExecuteAsync(Dictionary<string, object> parameters)

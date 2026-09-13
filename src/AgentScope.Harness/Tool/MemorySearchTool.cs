@@ -23,6 +23,7 @@ namespace AgentScope.Harness.Tool;
 public sealed class MemorySearchTool(ILongTermMemory memory) : ITool
 {
     public string Name => "memory_search";
+    public bool IsExternal => false;
     public string Description => "搜索长期记忆中的信息";
 
     public async Task<ToolResult> ExecuteAsync(Dictionary<string, object> parameters)

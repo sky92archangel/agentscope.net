@@ -25,6 +25,7 @@ namespace AgentScope.Harness.Tool;
 public sealed class FilesystemTool(IFilesystem filesystem) : ITool
 {
     public string Name => "filesystem";
+    public bool IsExternal => false;
     public string Description => "文件系统操作：读写文件、搜索内容、列出目录";
 
     public async Task<ToolResult> ExecuteAsync(Dictionary<string, object> parameters)

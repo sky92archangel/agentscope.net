@@ -15,21 +15,37 @@
 namespace AgentScope.Core.Tool;
 
 /// <summary>
-/// 工具组：按功能分组工具，支持动态激活/禁用，用于权限与能力边界控制。
+/// 工具组：按功能分组工具，支持动态激活/禁用和范围管理。
+/// 用于权限边界控制与能力隔离。
+///
+/// 对标: Java io.agentscope.core.tool.ToolGroup
 /// </summary>
 public class ToolGroup
 {
     private readonly HashSet<string> _tools = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>组名，唯一标识。</summary>
     public string Name { get; }
+
+    /// <summary>组描述 (LLM 可读)。</summary>
     public string Description { get; }
+
+    /// <summary>当前是否激活。</summary>
     public bool IsActive { get; set; }
 
-    public ToolGroup(string name, string description = "", bool isActive = true)
+    /// <summary>
+    /// 作用域：Meta (Agent 可管理) 或 External (仅开发者管理)。
+    /// 默认为 Meta 以保持向后兼容。
+    /// </summary>
+    public ToolGroupScope Scope { get; }
+
+    public ToolGroup(string name, string description = "", bool isActive = true,
+                     ToolGroupScope scope = ToolGroupScope.Meta)
     {
         Name = name ?? throw new ArgumentNullException(nameof(name));
         Description = description ?? "";
         IsActive = isActive;
+        Scope = scope;
     }
 
     public void AddTool(string toolName)
@@ -44,7 +60,8 @@ public class ToolGroup
             _tools.Remove(toolName);
     }
 
-    public bool ContainsTool(string toolName) => toolName != null && _tools.Contains(toolName);
+    public bool ContainsTool(string toolName)
+        => toolName != null && _tools.Contains(toolName);
 
     public IReadOnlySet<string> GetTools() => _tools;
 }

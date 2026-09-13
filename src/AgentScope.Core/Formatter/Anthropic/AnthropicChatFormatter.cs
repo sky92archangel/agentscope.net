@@ -18,9 +18,6 @@ using AgentScope.Core.Formatter.Anthropic.Dto;
 using AgentScope.Core.Message;
 using AgentScope.Core.Model;
 
-// Use the global GenerateOptions from Formatter namespace
-using GenerateOptions = AgentScope.Core.Formatter.GenerateOptions;
-
 namespace AgentScope.Core.Formatter.Anthropic;
 
 /// <summary>
@@ -58,7 +55,7 @@ public class AnthropicChatFormatter : AnthropicBaseFormatter
     /// <summary>
     /// Get model name.
     /// </summary>
-    protected override string GetModelName(GenerateOptions? options)
+    protected override string GetModelName(global::AgentScope.Core.Formatter.GenerateOptions? options)
     {
         // Check for model in options first
         if (options?.AdditionalBodyParams?.TryGetValue("model", out var modelObj) == true &&
@@ -73,7 +70,7 @@ public class AnthropicChatFormatter : AnthropicBaseFormatter
     /// <summary>
     /// Merge source options into target.
     /// </summary>
-    private void MergeOptions(GenerateOptions target, GenerateOptions source)
+    private void MergeOptions(global::AgentScope.Core.Formatter.GenerateOptions target, global::AgentScope.Core.Formatter.GenerateOptions source)
     {
         if (source.Temperature.HasValue)
             target.Temperature = source.Temperature;

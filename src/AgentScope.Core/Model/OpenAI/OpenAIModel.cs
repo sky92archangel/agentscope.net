@@ -41,6 +41,16 @@ namespace AgentScope.Core.Model.OpenAI;
 public class OpenAIModel : ModelBase, IStreamingChatModel
 {
     /// <summary>
+    /// OpenAI 支持 response_format 原生结构化输出（JSON Schema）。
+    /// </summary>
+    public override bool SupportsNativeStructuredOutput => true;
+
+    /// <summary>
+    /// OpenAI 支持工具调用与 response_format 共存（tools+json_object 模式）。
+    /// </summary>
+    public override bool SupportsNativeStructuredOutputWithTools => true;
+
+    /// <summary>
     /// HTTP client for communicating with the OpenAI-compatible API endpoint.
     /// 用于与 OpenAI 兼容 API 端点通信的 HTTP 客户端。
     /// </summary>

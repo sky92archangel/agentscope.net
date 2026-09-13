@@ -31,6 +31,16 @@ public sealed class MySqlDistributedStore : IDistributedStore
     /// </summary>
     private readonly string _connectionString;
 
+    /// <summary>存储表名。</summary>
+    private const string TableName = "agentscope_store";
+    private const string KeyColumn = "key";
+    private const string ValueColumn = "value";
+
+    /// <summary>
+    /// SQL 方言。默认为 MySQL，可通过对象初始化器设置为其他方言以支持不同数据库。
+    /// </summary>
+    public SqlDialect Dialect { get; init; } = SqlDialect.MySql;
+
     /// <summary>
     /// Initializes a new instance of <see cref="MySqlDistributedStore"/>.
     /// 初始化 <see cref="MySqlDistributedStore"/> 的新实例。
@@ -59,13 +69,7 @@ public sealed class MySqlDistributedStore : IDistributedStore
         await using var conn = new MySqlConnection(_connectionString);
         await conn.OpenAsync();
         var cmd = conn.CreateCommand();
-        cmd.CommandText = @"
-CREATE TABLE IF NOT EXISTS agentscope_store (
-    `key` VARCHAR(255) PRIMARY KEY,
-    `value` LONGTEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    expires_at TIMESTAMP NULL
-)";
+        cmd.CommandText = Dialect.GetCreateTableSql(TableName, KeyColumn, ValueColumn, null);
         await cmd.ExecuteNonQueryAsync();
     }
 
@@ -88,7 +92,7 @@ CREATE TABLE IF NOT EXISTS agentscope_store (
         var cmd = conn.CreateCommand();
         // 只查询未过期的条目：expires_at 为 NULL（永不过期）或大于当前时间
         // Only query entries that haven't expired: expires_at is NULL (never expires) or later than NOW()
-        cmd.CommandText = "SELECT `value` FROM agentscope_store WHERE `key` = @k AND (expires_at IS NULL OR expires_at > NOW())";
+        cmd.CommandText = Dialect.GetSelectSql(TableName, KeyColumn);
         cmd.Parameters.AddWithValue("@k", key);
         var result = await cmd.ExecuteScalarAsync(ct);
         return result?.ToString();
@@ -115,8 +119,8 @@ CREATE TABLE IF NOT EXISTS agentscope_store (
         // 根据是否有 TTL 选择不同的 SQL，有 TTL 时计算绝对过期时间
         // Choose different SQL based on TTL presence; when TTL is set, compute the absolute expiration timestamp
         cmd.CommandText = ttl.HasValue
-            ? "REPLACE INTO agentscope_store (`key`, `value`, `expires_at`) VALUES (@k, @v, DATE_ADD(NOW(), INTERVAL @t SECOND))"
-            : "REPLACE INTO agentscope_store (`key`, `value`) VALUES (@k, @v)";
+            ? Dialect.GetUpsertWithTtlSql(TableName, KeyColumn, ValueColumn, null)
+            : Dialect.GetUpsertSql(TableName, KeyColumn, ValueColumn, null);
         cmd.Parameters.AddWithValue("@k", key);
         cmd.Parameters.AddWithValue("@v", value);
         if (ttl.HasValue) cmd.Parameters.AddWithValue("@t", (int)ttl.Value.TotalSeconds);
@@ -138,7 +142,7 @@ CREATE TABLE IF NOT EXISTS agentscope_store (
         await using var conn = new MySqlConnection(_connectionString);
         await conn.OpenAsync(ct);
         var cmd = conn.CreateCommand();
-        cmd.CommandText = "DELETE FROM agentscope_store WHERE `key` = @k";
+        cmd.CommandText = Dialect.GetDeleteSql(TableName, KeyColumn);
         cmd.Parameters.AddWithValue("@k", key);
         // 影响行数 > 0 表示成功删除了条目
         // Affected rows > 0 indicates a row was actually deleted
@@ -162,7 +166,7 @@ CREATE TABLE IF NOT EXISTS agentscope_store (
         await using var conn = new MySqlConnection(_connectionString);
         await conn.OpenAsync(ct);
         var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT `key` FROM agentscope_store WHERE `key` LIKE @p";
+        cmd.CommandText = Dialect.GetListKeysSql(TableName, KeyColumn);
         cmd.Parameters.AddWithValue("@p", $"{prefix}%");
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         // 逐行读取结果集，yield 返回每个键

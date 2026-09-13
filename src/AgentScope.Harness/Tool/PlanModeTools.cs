@@ -34,6 +34,7 @@ public static class PlanModeTools
         private readonly PlanModeManager _manager;
         public TogglePlanModeTool(PlanModeManager m) => _manager = m;
         public string Name => "plan_mode_toggle";
+    public bool IsExternal => false;
         public string Description => "切换 PLAN/BUILD 模式";
 
         public Task<ToolResult> ExecuteAsync(Dictionary<string, object> parameters)
@@ -73,6 +74,7 @@ public static class PlanModeTools
         private readonly PlanModeManager _manager;
         public QueryPlanModeTool(PlanModeManager m) => _manager = m;
         public string Name => "plan_mode_query";
+    public bool IsExternal => false;
         public string Description => "查询当前 PLAN/BUILD 模式";
 
         public Task<ToolResult> ExecuteAsync(Dictionary<string, object> parameters)

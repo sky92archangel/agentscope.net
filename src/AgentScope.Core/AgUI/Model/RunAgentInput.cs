@@ -73,6 +73,7 @@ public sealed record TextInputContent(string Text) : InputContent("text");
 public sealed record ImageInputContent(InputContentSource Source) : InputContent("image");
 public sealed record AudioInputContent(InputContentSource Source) : InputContent("audio");
 public sealed record VideoInputContent(InputContentSource Source) : InputContent("video");
+public sealed record DocumentInputContent(string FileUrl, string MimeType) : InputContent("document");
 
 /// <summary>
 /// 输入内容来源。对标 Java InputContentSource。

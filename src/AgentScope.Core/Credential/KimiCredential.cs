@@ -38,9 +38,9 @@ public class KimiCredential : CredentialBase
     }
 
     /// <summary>
-    /// KimiChatModel 尚未实现，返回 <c>null</c>。
+    /// 返回 KimiModel 类型。
     /// </summary>
-    public override Type? GetChatModelClass() => null;
+    public override Type? GetChatModelClass() => typeof(Model.Kimi.KimiModel);
 
     /// <summary>
     /// 列出此凭据支持的 Kimi 模型。

@@ -78,8 +78,9 @@ public static class AnthropicMessageConverter
     /// not as part of the messages list.
     /// </summary>
     /// <param name="messages">All messages including potential system message</param>
-    /// <returns>System message content or null</returns>
-    public static List<AnthropicSystemMessage>? ExtractSystemMessage(List<Msg> messages)
+    /// <param name="promptCaching">Prompt caching configuration (null = disabled)</param>
+    /// <returns>System message list or null</returns>
+    public static List<AnthropicSystemMessage>? ExtractSystemMessage(List<Msg> messages, AnthropicPromptCacheConfig? promptCaching = null)
     {
         if (messages.Count == 0)
         {
@@ -92,14 +93,49 @@ public static class AnthropicMessageConverter
             var text = first.GetTextContent();
             if (!string.IsNullOrEmpty(text))
             {
-                return new List<AnthropicSystemMessage>
+                var sysMsg = new AnthropicSystemMessage { Text = text };
+
+                // 启用 prompt caching 时在系统消息上打 cache_control: ephemeral
+                if (promptCaching?.Enabled == true)
                 {
-                    new AnthropicSystemMessage { Text = text }
-                };
+                    sysMsg = sysMsg with { CacheControl = new CacheControl { Type = "ephemeral" } };
+                }
+
+                return new List<AnthropicSystemMessage> { sysMsg };
             }
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Apply cache_control: ephemeral to the last text block of each assistant message,
+    /// and specifically to the very last content block (for Anthropic prompt caching).
+    /// 在启用了 prompt caching 时，给助手的最后一条消息的最后一个内容块添加 cache_control。
+    /// </summary>
+    public static List<AnthropicMessage> ApplyContentBlockCaching(List<AnthropicMessage> messages)
+    {
+        if (messages.Count == 0) return messages;
+
+        for (var i = messages.Count - 1; i >= 0; i--)
+        {
+            var msg = messages[i];
+            if (msg.Role != AnthropicRole.Assistant) continue;
+
+            // 找到最后一个文本块并标记缓存
+            for (var j = msg.Content.Count - 1; j >= 0; j--)
+            {
+                if (msg.Content[j] is Dto.TextBlock textBlock)
+                {
+                    var updated = textBlock with { CacheControl = new Dto.CacheControl { Type = "ephemeral" } };
+                    var newContent = new List<AnthropicContentBlock>(msg.Content) { [j] = updated };
+                    messages[i] = msg with { Content = newContent };
+                    return messages; // 只标记最后一个助手消息的最后一个文本块
+                }
+            }
+        }
+
+        return messages;
     }
 
     /// <summary>
@@ -110,8 +146,13 @@ public static class AnthropicMessageConverter
         var role = ConvertRole(msg.Role, isFirstMessage);
         var contentBlocks = new List<AnthropicContentBlock>();
 
-        // Handle text content
-        var textContent = msg.GetTextContent();
+        // Handle text content (优先处理 DataBlock 文本)
+        string textContent;
+        if (msg.Content is DataBlock dbText)
+            textContent = dbText.Text ?? "";
+        else
+            textContent = msg.GetTextContent() ?? "";
+
         if (!string.IsNullOrEmpty(textContent))
         {
             contentBlocks.Add(new Dto.TextBlock { Text = textContent });
@@ -142,6 +183,19 @@ public static class AnthropicMessageConverter
                 if (imageBlock != null)
                 {
                     contentBlocks.Add(imageBlock);
+                }
+            }
+        }
+
+        // 处理 DataBlock 来源
+        if (msg.Content is DataBlock dataBlock && dataBlock.Sources != null)
+        {
+            foreach (var source in dataBlock.Sources)
+            {
+                var block = ConvertSourceToAnthropicBlock(source);
+                if (block != null)
+                {
+                    contentBlocks.Add(block);
                 }
             }
         }
@@ -264,6 +318,44 @@ public static class AnthropicMessageConverter
         catch
         {
             return null;
+        }
+    }
+
+    /// <summary>
+    /// 将 DataBlock Source 转换为 Anthropic 内容块
+    /// </summary>
+    private static AnthropicContentBlock? ConvertSourceToAnthropicBlock(Source source)
+    {
+        switch (source)
+        {
+            case URLSource { MimeType: var mime, Url: var url }
+                when mime?.StartsWith("image/") == true:
+                // 复用现有 ConvertImage 逻辑
+                return ConvertImage(url);
+
+            case Base64Source { MediaType: var mt, Data: var data }
+                when mt.StartsWith("image/"):
+                return new Dto.ImageBlock
+                {
+                    Source = new Dto.ImageSource
+                    {
+                        Type = "base64",
+                        MediaType = mt,
+                        Data = data
+                    }
+                };
+
+            // Anthropic 非图片媒体暂不支持原生格式，以文本占位
+            case URLSource { MimeType: var mime, Url: var url }
+                when mime?.StartsWith("audio/") == true:
+                return new Dto.TextBlock { Text = $"[Audio: {url}]" };
+
+            case URLSource { MimeType: var mime, Url: var url }
+                when mime?.StartsWith("video/") == true:
+                return new Dto.TextBlock { Text = $"[Video: {url}]" };
+
+            default:
+                return null;
         }
     }
 

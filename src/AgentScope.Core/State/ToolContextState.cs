@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 
 namespace AgentScope.Core.State;
@@ -34,6 +35,12 @@ public class ToolContextState : IState
     /// <summary>本会话累计工具调用次数</summary>
     public int ToolCallCount { get; set; }
 
+    /// <summary>子 Agent 孵化注册表（跨会话恢复 + 跨副本路由）</summary>
+    public ConcurrentDictionary<string, SpawnEntry> SpawnRegistry { get; set; } = new();
+
+    /// <summary>读缓存条目（LRU，mtime 校验）</summary>
+    public ConcurrentDictionary<string, ReadCacheEntry> ReadCache { get; set; } = new();
+
     /// <summary>记录一次工具调用</summary>
     public void RecordCall(string toolName, Dictionary<string, object>? arguments)
     {
@@ -48,3 +55,10 @@ public class ToolContextState : IState
     /// <summary>完成并移除一个挂起的异步工具调用</summary>
     public bool CompletePending(string toolCallId) => PendingAsyncToolIds.Remove(toolCallId);
 }
+
+/// <summary>
+/// 孵化条目。记录 spawn 的子 agent 关系。
+/// </summary>
+public record SpawnEntry(string ChildSessionId, string AgentName, DateTime CreatedAt);
+
+

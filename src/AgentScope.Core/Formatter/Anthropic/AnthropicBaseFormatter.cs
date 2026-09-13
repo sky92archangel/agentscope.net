@@ -21,9 +21,6 @@ using AgentScope.Core.Formatter.Anthropic.Dto;
 using AgentScope.Core.Message;
 using AgentScope.Core.Model;
 
-// Use the global GenerateOptions from Formatter namespace
-using GenerateOptions = AgentScope.Core.Formatter.GenerateOptions;
-
 namespace AgentScope.Core.Formatter.Anthropic;
 
 /// <summary>
@@ -51,7 +48,7 @@ public static class AnthropicSerializerOptions
 /// 此类处理：
 /// - System message extraction and application (Anthropic requires system via system parameter)
 ///   系统消息提取和应用（Anthropic 要求系统消息通过 system 参数传递）
-/// - Tool choice configuration with GenerateOptions
+/// - Tool choice configuration with global::AgentScope.Core.Formatter.GenerateOptions
 ///   工具选择配置
 ///
 /// Java参考: io.agentscope.core.formatter.anthropic.AnthropicBaseFormatter
@@ -71,11 +68,11 @@ public abstract class AnthropicBaseFormatter
     /// <param name="messages">AgentScope messages / AgentScope 消息列表</param>
     /// <param name="options">Generation options / 生成选项</param>
     /// <returns>Anthropic request / Anthropic 请求对象</returns>
-    public virtual AnthropicRequest Format(List<Msg> messages, GenerateOptions? options = null)
+    public virtual AnthropicRequest Format(List<Msg> messages, global::AgentScope.Core.Formatter.GenerateOptions? options = null)
     {
         // 提取系统消息（Anthropic 使用独立的 system 参数）
         // Extract system message (Anthropic uses separate system parameter)
-        var systemMessages = AnthropicMessageConverter.ExtractSystemMessage(messages);
+        var systemMessages = AnthropicMessageConverter.ExtractSystemMessage(messages, options?.PromptCaching);
 
         // 转换剩余消息
         // Convert remaining messages
@@ -88,6 +85,13 @@ public abstract class AnthropicBaseFormatter
         }
 
         var anthropicMessages = AnthropicMessageConverter.Convert(filteredMessages);
+
+        // 应用 cache_control 到最后一个内容块（prompt caching 需要）
+        // Apply cache_control to the last content block for prompt caching
+        if (options?.PromptCaching?.Enabled == true)
+        {
+            anthropicMessages = AnthropicMessageConverter.ApplyContentBlockCaching(anthropicMessages);
+        }
 
         // 构建请求
         // Build request
@@ -193,7 +197,7 @@ public abstract class AnthropicBaseFormatter
     /// Get model name from options or use default.
     /// 从选项获取模型名称或使用默认值
     /// </summary>
-    protected virtual string GetModelName(GenerateOptions? options)
+    protected virtual string GetModelName(global::AgentScope.Core.Formatter.GenerateOptions? options)
     {
         // 检查选项中是否指定了模型
         // Check for model in options metadata
@@ -212,7 +216,7 @@ public abstract class AnthropicBaseFormatter
     /// Apply generation options to Anthropic request.
     /// 应用生成选项到 Anthropic 请求
     /// </summary>
-    protected virtual AnthropicRequest ApplyOptions(AnthropicRequest request, GenerateOptions? options)
+    protected virtual AnthropicRequest ApplyOptions(AnthropicRequest request, global::AgentScope.Core.Formatter.GenerateOptions? options)
     {
         if (options == null)
         {
@@ -282,7 +286,7 @@ public abstract class AnthropicBaseFormatter
     /// Apply tool schemas to request.
     /// 应用工具模式到请求
     /// </summary>
-    protected virtual AnthropicRequest ApplyTools(AnthropicRequest request, List<ToolSchema> tools, GenerateOptions options)
+    protected virtual AnthropicRequest ApplyTools(AnthropicRequest request, List<ToolSchema> tools, global::AgentScope.Core.Formatter.GenerateOptions options)
     {
         if (tools == null || tools.Count == 0)
         {
@@ -293,7 +297,10 @@ public abstract class AnthropicBaseFormatter
         {
             Name = t.Name,
             Description = t.Description ?? $"Tool: {t.Name}",
-            InputSchema = t.Parameters ?? new Dictionary<string, object>()
+            InputSchema = t.Parameters ?? new Dictionary<string, object>(),
+            CacheControl = options?.PromptCaching?.Enabled == true
+                ? new CacheControl { Type = "ephemeral" }
+                : null
         }).ToList();
 
         return request with { Tools = anthropicTools };

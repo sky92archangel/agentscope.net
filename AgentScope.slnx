@@ -3,6 +3,11 @@
     <Project Path="examples/QuickStart/QuickStart.csproj" />
     <Project Path="examples/AgentScope.Client/AgentScope.Client.csproj" />
     <Project Path="examples/AgentScope.Lab/AgentScope.Lab.csproj" />
+    <Project Path="examples/AgentScope.Example.HITL/AgentScope.Example.HITL.csproj" />
+    <Project Path="examples/AgentScope.Example.StructuredOutput/AgentScope.Example.StructuredOutput.csproj" />
+    <Project Path="examples/AgentScope.Example.PromptCaching/AgentScope.Example.PromptCaching.csproj" />
+    <Project Path="examples/AgentScope.Example.GLM/AgentScope.Example.GLM.csproj" />
+    <Project Path="examples/AgentScope.Example.Kimi/AgentScope.Example.Kimi.csproj" />
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/AgentScope.Core/AgentScope.Core.csproj" />

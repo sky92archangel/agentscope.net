@@ -14,7 +14,10 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.RegularExpressions;
+using AgentScope.Core.Agent;
+using AgentScope.Core.Tool;
 
 namespace AgentScope.Core.Permission;
 
@@ -170,9 +173,9 @@ public interface IPermissionEngine
 }
 
 /// <summary>
-/// 6-step priority state machine permission engine:
-/// 6 步优先级状态机权限引擎：
-/// deny > ask > tool-specific > allow > bypass > default
+/// 9-step priority state machine permission engine:
+/// 9 步优先级状态机权限引擎：
+/// deny > ask > tool-specific > allow > bypass > mode_acceptedits/explore > path_check > default
 /// 
 /// The engine evaluates tool call requests against a set of rules with the following priority:
 /// 引擎按以下优先级评估工具调用请求：
@@ -181,7 +184,10 @@ public interface IPermissionEngine
 /// 3. Tool-specific built-in rules / 工具特定的内置规则
 /// 4. Allow rules / 允许规则
 /// 5. Bypass mode / 绕过模式
-/// 6. Default fallback / 默认回退
+/// 6. AcceptEdits/Explore mode / AcceptEdits/Explore 模式
+/// 7. 参数级路径检查
+/// 8. AdditionalWorkingDirectory 安全检查
+/// 9. Default fallback / 默认回退
 /// 
 /// Corresponds to Java: io.agentscope.core.permission.PermissionEngine
 /// 对应 Java: io.agentscope.core.permission.PermissionEngine
@@ -201,11 +207,64 @@ public class PermissionEngine : IPermissionEngine
     private readonly List<PermissionRule> _rules = new();
 
     /// <summary>
+    /// 附加工作目录列表。用于在路径安全评估时放行落在这些目录内的操作。
+    /// </summary>
+    private readonly List<AdditionalWorkingDirectory> _additionalWorkingDirectories = new();
+
+    /// <summary>
+    /// 只读工具名模式前缀集合。
+    /// </summary>
+    private static readonly HashSet<string> ReadToolPrefixes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Read", "List", "Get", "Search", "Glob", "Grep", "Find", "Lookup", "Query", "Stat",
+        "Peek", "Fetch", "Check", "View", "Cat", "Head", "Tail", "Show", "Dump", "Inspect"
+    };
+
+    /// <summary>
+    /// 写工具名模式前缀集合。
+    /// </summary>
+    private static readonly HashSet<string> WriteToolPrefixes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Write", "Edit", "Set", "Create", "Delete", "Remove", "Move", "Copy", "Patch",
+        "Update", "Put", "Post", "Upload", "Save", "Store", "Add", "Insert", "Modify",
+        "Rename", "Replace", "Merge", "Append", "Truncate", "Format", "Mkdir", "MkFile"
+    };
+
+    /// <summary>
+    /// filesystem 工具的只读操作名称。
+    /// </summary>
+    private static readonly HashSet<string> FilesystemReadOps = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "read", "list", "grep", "glob", "search", "find", "stat", "exists"
+    };
+
+    /// <summary>
+    /// filesystem 工具的写操作名称。
+    /// </summary>
+    private static readonly HashSet<string> FilesystemWriteOps = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "write", "edit", "delete", "remove", "move", "copy", "rename", "mkdir", "mkfile",
+        "append", "patch", "chmod", "chown"
+    };
+
+    /// <summary>
     /// Initializes a new instance of PermissionEngine with the specified mode.
     /// 使用指定的模式初始化 PermissionEngine 的新实例。
     /// </summary>
     /// <param name="mode">The permission mode. Defaults to Default. 权限模式。默认为 Default。</param>
     public PermissionEngine(PermissionMode mode = PermissionMode.Default) => _mode = mode;
+
+    /// <summary>
+    /// Initializes a new instance of PermissionEngine with mode and additional working directories.
+    /// 使用指定的模式和附加工作目录初始化 PermissionEngine 的新实例。
+    /// </summary>
+    /// <param name="mode">The permission mode. 权限模式。</param>
+    /// <param name="additionalWorkingDirectories">附加工作目录列表。</param>
+    public PermissionEngine(PermissionMode mode, List<AdditionalWorkingDirectory> additionalWorkingDirectories)
+    {
+        _mode = mode;
+        _additionalWorkingDirectories = additionalWorkingDirectories ?? new List<AdditionalWorkingDirectory>();
+    }
 
     /// <summary>
     /// Adds a permission rule to the engine.
@@ -222,8 +281,21 @@ public class PermissionEngine : IPermissionEngine
     }
 
     /// <summary>
-    /// Evaluates a tool call request using the 6-step priority state machine.
-    /// 使用 6 步优先级状态机评估工具调用请求。
+    /// Adds an additional working directory to the engine.
+    /// 向引擎添加附加工作目录。
+    /// </summary>
+    /// <param name="path">Directory path / 目录路径</param>
+    /// <param name="source">Source description / 来源说明</param>
+    /// <returns>This PermissionEngine instance for fluent chaining. 此 PermissionEngine 实例，支持链式调用。</returns>
+    public PermissionEngine AddAdditionalWorkingDirectory(string path, string source)
+    {
+        _additionalWorkingDirectories.Add(new AdditionalWorkingDirectory(path, source));
+        return this;
+    }
+
+    /// <summary>
+    /// Evaluates a tool call request using the 9-step priority state machine.
+    /// 使用 9 步优先级状态机评估工具调用请求。
     /// </summary>
     /// <param name="request">The tool call request to evaluate. 要评估的工具调用请求。</param>
     /// <returns>A PermissionDecision with the evaluation result. 包含评估结果的 PermissionDecision。</returns>
@@ -273,8 +345,46 @@ public class PermissionEngine : IPermissionEngine
             return new PermissionDecision(PermissionBehavior.Allow, "Bypass 模式: 放行");
         }
 
-        // Step 6: Default fallback
-        // 第 6 步: default 回退
+        // Step 6: AcceptEdits / Explore mode handling
+        // 第 6 步: AcceptEdits / Explore 模式处理
+        if (_mode == PermissionMode.AcceptEdits)
+        {
+            // 只读工具直接放行，写操作需要用户确认
+            if (IsReadTool(request.ToolName, request.Arguments))
+            {
+                return new PermissionDecision(PermissionBehavior.Allow, "AcceptEdits 模式: 只读工具放行");
+            }
+            return new PermissionDecision(PermissionBehavior.Ask, "AcceptEdits 模式: 写操作需要确认");
+        }
+
+        if (_mode == PermissionMode.Explore)
+        {
+            // 只读工具放行，写操作直接拒绝
+            if (IsReadTool(request.ToolName, request.Arguments))
+            {
+                return new PermissionDecision(PermissionBehavior.Allow, "Explore 模式: 只读操作放行");
+            }
+            return new PermissionDecision(PermissionBehavior.Deny, "Explore 模式: 禁止写操作");
+        }
+
+        // Step 7: 参数级路径检查 - 检测危险路径参数
+        // 即使工具名不在 deny 列表，但参数包含敏感路径时也触发 Ask
+        var pathCheckResult = CheckArgumentsForDangerousPaths(request.Arguments);
+        if (pathCheckResult != null)
+        {
+            return pathCheckResult;
+        }
+
+        // Step 8: AdditionalWorkingDirectory 安全检查
+        // 从 RuntimeContext 获取附加工作目录列表，检查路径是否落在允许的目录范围内
+        var runtimeCheckResult = CheckRuntimeContextForPathSafety(request.Arguments);
+        if (runtimeCheckResult != null)
+        {
+            return runtimeCheckResult;
+        }
+
+        // Step 9: Default fallback
+        // 第 9 步: default 回退
         if (_mode == PermissionMode.DontAsk)
         {
             return new PermissionDecision(PermissionBehavior.Allow, "DontAsk 模式: 默认放行");
@@ -292,4 +402,227 @@ public class PermissionEngine : IPermissionEngine
     /// <param name="p">The wildcard pattern. 通配符模式。</param>
     /// <returns>The equivalent regular expression pattern. 等效的正则表达式模式。</returns>
     private static string Wildcard(string p) => "^" + Regex.Escape(p).Replace("\\*", ".*") + "$";
+
+    /// <summary>
+    /// 判断工具是否为只读工具。
+    /// 包括：名称前缀匹配、filesystem 工具的只读操作、已知的只读 shell 命令。
+    /// </summary>
+    private static bool IsReadTool(string toolName, Dictionary<string, object>? arguments)
+    {
+        // filesystem 工具：根据 operation 参数判断
+        if (toolName.Equals("filesystem", StringComparison.OrdinalIgnoreCase))
+        {
+            var op = arguments?.GetValueOrDefault("operation")?.ToString() ?? "";
+            return FilesystemReadOps.Contains(op);
+        }
+
+        // shell_execute：检查命令内容是否只读
+        if (toolName.Equals("shell_execute", StringComparison.OrdinalIgnoreCase))
+        {
+            var cmd = arguments?.GetValueOrDefault("command")?.ToString() ?? "";
+            return !ToolDangerousPathConstants.ContainsDangerousCommand(cmd) && IsReadOnlyShellCommand(cmd);
+        }
+
+        // 通用前缀匹配
+        foreach (var prefix in ReadToolPrefixes)
+        {
+            if (toolName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// 判断工具是否为写工具（修改数据的操作）。
+    /// </summary>
+    private static bool IsWriteTool(string toolName, Dictionary<string, object>? arguments)
+    {
+        // filesystem 工具：根据 operation 参数判断
+        if (toolName.Equals("filesystem", StringComparison.OrdinalIgnoreCase))
+        {
+            var op = arguments?.GetValueOrDefault("operation")?.ToString() ?? "";
+            return FilesystemWriteOps.Contains(op);
+        }
+
+        // shell_execute：包含危险命令关键字的视为写操作
+        if (toolName.Equals("shell_execute", StringComparison.OrdinalIgnoreCase))
+        {
+            var cmd = arguments?.GetValueOrDefault("command")?.ToString() ?? "";
+            return ToolDangerousPathConstants.ContainsDangerousCommand(cmd);
+        }
+
+        // 通用前缀匹配
+        foreach (var prefix in WriteToolPrefixes)
+        {
+            if (toolName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// 判断 shell 命令是否为只读（不修改系统状态）。
+    /// </summary>
+    private static bool IsReadOnlyShellCommand(string command)
+    {
+        if (string.IsNullOrWhiteSpace(command)) return false;
+        var trimmed = command.TrimStart();
+        // 常见只读命令
+        var readCommands = new[] { "ls", "cat", "head", "tail", "echo", "pwd", "whoami",
+            "date", "which", "env", "printenv", "type", "where", "find", "grep",
+            "rg", "ag", "wc", "sort", "uniq", "diff", "stat", "du", "df",
+            "ps", "top", "htop", "ip", "ifconfig", "netstat", "ss",
+            "curl", "wget", "ping", "traceroute", "nslookup", "dig",
+            "git status", "git log", "git diff", "git show" };
+        foreach (var cmd in readCommands)
+        {
+            if (trimmed.StartsWith(cmd, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// 检查工具参数中是否包含危险路径。
+    /// 检测 ~/、/etc/、C:\Windows\ 等敏感路径，以及敏感文件名。
+    /// 如果路径落在附加工作目录内则放行。
+    /// </summary>
+    private PermissionDecision? CheckArgumentsForDangerousPaths(Dictionary<string, object>? arguments)
+    {
+        if (arguments == null || arguments.Count == 0) return null;
+
+        var sensitivePaths = new List<string>();
+        var allowedPaths = GetAllowedWorkingDirectories();
+
+        foreach (var kv in arguments)
+        {
+            var val = kv.Value?.ToString();
+            if (string.IsNullOrEmpty(val)) continue;
+
+            // 检查 ~/ 和 ~ （home 目录引用）
+            if (val.Contains("~/") || val.Trim().Equals("~", StringComparison.Ordinal))
+            {
+                if (!IsPathInAllowedDirectories(val, allowedPaths))
+                {
+                    sensitivePaths.Add($"参数 '{kv.Key}' 包含 home 目录引用: {val}");
+                    continue;
+                }
+            }
+
+            // 检查系统敏感路径
+            if (ToolDangerousPathConstants.IsSystemSensitive(val))
+            {
+                if (!IsPathInAllowedDirectories(val, allowedPaths))
+                {
+                    sensitivePaths.Add($"参数 '{kv.Key}' 指向系统敏感路径: {val}");
+                    continue;
+                }
+            }
+
+            // 检查敏感文件名
+            if (ToolDangerousPathConstants.IsSensitiveFile(val))
+            {
+                sensitivePaths.Add($"参数 '{kv.Key}' 指向敏感文件: {val}");
+            }
+        }
+
+        if (sensitivePaths.Count > 0)
+        {
+            return new PermissionDecision(
+                PermissionBehavior.Ask,
+                $"检测到危险路径参数:\n{string.Join("\n", sensitivePaths)}",
+                SuggestedRules: new List<string> { "添加 allow 规则放行该路径或修改路径参数" });
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// 检查 RuntimeContext 中的附加工作目录与当前工具参数路径的安全性。
+    /// 如果 RuntimeContext 提供了附加工作目录，且路径落在这些目录内，则允许操作。
+    /// </summary>
+    private PermissionDecision? CheckRuntimeContextForPathSafety(Dictionary<string, object>? arguments)
+    {
+        if (arguments == null || arguments.Count == 0) return null;
+
+        var ctx = RuntimeContext.Current;
+        if (ctx == null) return null;
+
+        var allowedDirs = new List<string>();
+        // 收集当前 RuntimeContext 链中的所有附加工作目录
+        var current = ctx;
+        while (current != null)
+        {
+            if (current.AdditionalWorkingDirectories != null)
+            {
+                foreach (var d in current.AdditionalWorkingDirectories)
+                {
+                    if (!string.IsNullOrEmpty(d.Path))
+                        allowedDirs.Add(d.Path.Replace('\\', '/').TrimEnd('/'));
+                }
+            }
+            current = current.Parent;
+        }
+
+        // 合并引擎自身配置的附加工作目录
+        foreach (var d in _additionalWorkingDirectories)
+        {
+            if (!string.IsNullOrEmpty(d.Path))
+                allowedDirs.Add(d.Path.Replace('\\', '/').TrimEnd('/'));
+        }
+
+        if (allowedDirs.Count == 0) return null;
+
+        // 检查所有路径参数是否在允许的目录范围内
+        foreach (var kv in arguments)
+        {
+            var val = kv.Value?.ToString();
+            if (string.IsNullOrEmpty(val)) continue;
+
+            var normalized = val.Replace('\\', '/').TrimEnd('/');
+            if (normalized.StartsWith("/") || normalized.Contains(":"))
+            {
+                // 绝对路径：必须在允许目录内
+                var inAllowed = allowedDirs.Any(d =>
+                    normalized.StartsWith(d, StringComparison.OrdinalIgnoreCase) ||
+                    d.StartsWith(normalized, StringComparison.OrdinalIgnoreCase));
+
+                if (!inAllowed)
+                {
+                    return new PermissionDecision(
+                        PermissionBehavior.Ask,
+                        $"路径 '{val}' 不在允许的工作目录范围内，需要确认");
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// 获取所有允许的工作目录（包括引擎配置的附加工作目录）。
+    /// </summary>
+    private List<string> GetAllowedWorkingDirectories()
+    {
+        var dirs = new List<string>();
+        foreach (var d in _additionalWorkingDirectories)
+        {
+            if (!string.IsNullOrEmpty(d.Path))
+                dirs.Add(d.Path.Replace('\\', '/').TrimEnd('/'));
+        }
+        return dirs;
+    }
+
+    /// <summary>
+    /// 判断路径是否在允许的目录列表内。
+    /// </summary>
+    private static bool IsPathInAllowedDirectories(string path, List<string> allowedDirs)
+    {
+        if (allowedDirs.Count == 0) return false;
+        var normalized = path.Replace('\\', '/').TrimEnd('/');
+        return allowedDirs.Any(d =>
+            normalized.StartsWith(d, StringComparison.OrdinalIgnoreCase));
+    }
 }

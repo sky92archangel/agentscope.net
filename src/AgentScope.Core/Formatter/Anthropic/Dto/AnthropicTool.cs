@@ -31,6 +31,9 @@ public record AnthropicTool
 
     [JsonPropertyName("input_schema")]
     public required Dictionary<string, object> InputSchema { get; init; }
+
+    [JsonPropertyName("cache_control")]
+    public CacheControl? CacheControl { get; init; }
 }
 
 /// <summary>

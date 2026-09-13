@@ -14,6 +14,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using AgentScope.Core.Events;
 
@@ -62,6 +63,21 @@ public sealed class MiddlewareChain
     public IReadOnlyList<MiddlewareBase> Middlewares => _middlewares;
 
     /// <summary>
+    /// Returns middlewares sorted by Order descending (stable).
+    /// Larger Order means outermost layer, i.e. executed first on the way in.
+    /// Same Order keeps registration order (stable sort).
+    /// 按 Order 降序稳定排序返回中间件：Order 大者位于最外层（进入时最先执行）；
+    /// 相同 Order 保持注册顺序。
+    /// </summary>
+    private IEnumerable<MiddlewareBase> Ordered()
+    {
+        var indexed = _middlewares.Select((mw, idx) => (mw, idx));
+        return indexed.OrderBy(t => t.mw.Order, Comparer<int>.Create((a, b) => b.CompareTo(a)))
+            .ThenBy(t => t.idx)
+            .Select(t => t.mw);
+    }
+
+    /// <summary>
     /// Builds the main agent invocation chain.
     /// Middleware are wrapped in reverse order so the first registered middleware
     /// executes first (outermost layer).
@@ -74,9 +90,8 @@ public sealed class MiddlewareChain
         Func<AgentInput, IAsyncEnumerable<Event>> coreHandler)
     {
         Func<AgentInput, IAsyncEnumerable<Event>> chain = coreHandler;
-        for (var i = _middlewares.Count - 1; i >= 0; i--)
+        foreach (var mw in Ordered().Reverse())
         {
-            var mw = _middlewares[i];
             var next = chain;
             chain = input => mw.OnAgentAsync(input, next);
         }
@@ -91,9 +106,8 @@ public sealed class MiddlewareChain
         Func<ReasoningInput, Task<ReasoningInput>> coreHandler)
     {
         Func<ReasoningInput, Task<ReasoningInput>> chain = coreHandler;
-        for (var i = _middlewares.Count - 1; i >= 0; i--)
+        foreach (var mw in Ordered().Reverse())
         {
-            var mw = _middlewares[i];
             var next = chain;
             chain = input => mw.OnReasoningAsync(input, next);
         }
@@ -108,9 +122,8 @@ public sealed class MiddlewareChain
         Func<ActingInput, Task<ActingInput>> coreHandler)
     {
         Func<ActingInput, Task<ActingInput>> chain = coreHandler;
-        for (var i = _middlewares.Count - 1; i >= 0; i--)
+        foreach (var mw in Ordered().Reverse())
         {
-            var mw = _middlewares[i];
             var next = chain;
             chain = input => mw.OnActingAsync(input, next);
         }
@@ -125,9 +138,8 @@ public sealed class MiddlewareChain
         Func<ModelCallInput, Task<ModelCallInput>> coreHandler)
     {
         Func<ModelCallInput, Task<ModelCallInput>> chain = coreHandler;
-        for (var i = _middlewares.Count - 1; i >= 0; i--)
+        foreach (var mw in Ordered().Reverse())
         {
-            var mw = _middlewares[i];
             var next = chain;
             chain = input => mw.OnModelCallAsync(input, next);
         }
@@ -142,9 +154,8 @@ public sealed class MiddlewareChain
         Func<IAgent, RuntimeContext, string, Task<string>> coreHandler)
     {
         Func<IAgent, RuntimeContext, string, Task<string>> chain = coreHandler;
-        for (var i = _middlewares.Count - 1; i >= 0; i--)
+        foreach (var mw in Ordered().Reverse())
         {
-            var mw = _middlewares[i];
             var next = chain;
             chain = (agent, ctx, prompt) => mw.OnSystemPromptAsync(agent, ctx, prompt)
                 .ContinueWith(t => next(agent, ctx, t.Result)).Unwrap();

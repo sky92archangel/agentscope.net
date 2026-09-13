@@ -21,14 +21,31 @@ namespace AgentScope.Core.A2A.Server.Executor;
 /// <summary>
 /// A2A Agent 执行器。对标 Java AgentScopeAgentExecutor。
 /// 支持阻塞模式（完整结果）和流式模式（逐个事件发送）。
+/// 包含 TaskStore / QueueManager / PushSender 注入点（当前为 null/空实现）。
 /// </summary>
-public sealed class AgentScopeAgentExecutor(IAgentRunner runner)
+public sealed class AgentScopeAgentExecutor
 {
+    private readonly IAgentRunner _runner;
+
+    /// <summary>Task 持久化存储（注入点，当前为 null/空实现）。对标 Java TaskStore。</summary>
+    public object? TaskStore { get; init; }
+
+    /// <summary>队列管理器（注入点，当前为 null/空实现）。对标 Java QueueManager。</summary>
+    public object? QueueManager { get; init; }
+
+    /// <summary>推送发送器（注入点，当前为 null/空实现）。对标 Java PushSender。</summary>
+    public object? PushSender { get; init; }
+
+    public AgentScopeAgentExecutor(IAgentRunner runner)
+    {
+        _runner = runner;
+    }
+
     public async Task<Msg> ExecuteAsync(IReadOnlyList<Msg> messages, AgentRequestOptions? options = null,
         CancellationToken ct = default)
     {
         Msg? result = null;
-        await foreach (var evt in runner.StreamAsync(messages, options ?? new AgentRequestOptions(), ct))
+        await foreach (var evt in _runner.StreamAsync(messages, options ?? new AgentRequestOptions(), ct))
         {
             if (evt.IsLast && evt.Message != null)
                 result = evt.Message;
@@ -38,5 +55,5 @@ public sealed class AgentScopeAgentExecutor(IAgentRunner runner)
 
     public IAsyncEnumerable<Event> StreamAsync(IReadOnlyList<Msg> messages, AgentRequestOptions? options = null,
         CancellationToken ct = default) =>
-        runner.StreamAsync(messages, options ?? new AgentRequestOptions(), ct);
+        _runner.StreamAsync(messages, options ?? new AgentRequestOptions(), ct);
 }

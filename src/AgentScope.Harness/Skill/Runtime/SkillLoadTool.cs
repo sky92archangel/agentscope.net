@@ -27,6 +27,7 @@ public sealed class SkillLoadTool : ITool
     }
 
     public string Name => "load_skill";
+    public bool IsExternal => false;
     public string Description => "通过 skillId 加载 skill 的完整内容";
 
     public Dictionary<string, object> GetSchema() => new()

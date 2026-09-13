@@ -96,9 +96,40 @@ public sealed record ReasoningMessageEnd(string ThreadId, string RunId,
 public sealed record ReasoningEnd(string ThreadId, string RunId,
     long? Timestamp = null) : AguiEvent(AguiEventType.ReasoningEnd, ThreadId, RunId, Timestamp ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
 
-// ── 快照与扩�?──
+// ── 快照与增量 ──
 public sealed record StateSnapshot(string ThreadId, string RunId, object State,
     long? Timestamp = null) : AguiEvent(AguiEventType.StateSnapshot, ThreadId, RunId, Timestamp ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+
+public sealed record StateDelta(string ThreadId, string RunId, string AgentId, IReadOnlyDictionary<string, object?> Delta,
+    long? Timestamp = null) : AguiEvent(AguiEventType.StateDelta, ThreadId, RunId, Timestamp ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+
+public sealed record MessagesSnapshot(string ThreadId, string RunId, IReadOnlyList<AguiMessage> Messages, string SnapshotId,
+    long? Timestamp = null) : AguiEvent(AguiEventType.MessagesSnapshot, ThreadId, RunId, Timestamp ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+
+public sealed record ActivitySnapshot(string ThreadId, string RunId, string ActivityId, string Status, long ActivityTimestamp,
+    long? Timestamp = null) : AguiEvent(AguiEventType.ActivitySnapshot, ThreadId, RunId, Timestamp ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+
+public sealed record ActivityDelta(string ThreadId, string RunId, string ActivityId, IReadOnlyDictionary<string, object?> Delta,
+    long? Timestamp = null) : AguiEvent(AguiEventType.ActivityDelta, ThreadId, RunId, Timestamp ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+
+// ── 文本消息块（流式）──
+public sealed record TextMessageChunk(string ThreadId, string RunId, string MessageId, string TextDelta, int Index,
+    long? Timestamp = null) : AguiEvent(AguiEventType.TextMessageChunk, ThreadId, RunId, Timestamp ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+
+// ── 工具调用块（流式）──
+public sealed record ToolCallChunk(string ThreadId, string RunId, string ToolCallId, string Name, string ArgumentsPartial,
+    long? Timestamp = null) : AguiEvent(AguiEventType.ToolCallChunk, ThreadId, RunId, Timestamp ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+
+// ── 推理消息块（流式）──
+public sealed record ReasoningMessageChunk(string ThreadId, string RunId, string MessageId, string Content, string? Signature = null,
+    long? Timestamp = null) : AguiEvent(AguiEventType.ReasoningMessageChunk, ThreadId, RunId, Timestamp ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+
+public sealed record ReasoningEncryptedValue(string ThreadId, string RunId, string Subtype, string EntityId, string EncryptedData,
+    long? Timestamp = null) : AguiEvent(AguiEventType.ReasoningEncryptedValue, ThreadId, RunId, Timestamp ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+
+// ── 原始事件 ──
+public sealed record Raw(string ThreadId, string RunId, string EventType, System.Text.Json.JsonElement Payload,
+    long? Timestamp = null) : AguiEvent(AguiEventType.Raw, ThreadId, RunId, Timestamp ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
 
 public sealed record CustomEvent(string ThreadId, string RunId, string Name, object? Value = null,
     long? Timestamp = null) : AguiEvent(AguiEventType.Custom, ThreadId, RunId, Timestamp ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());

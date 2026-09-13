@@ -113,6 +113,26 @@ public static class GeminiMessageConverter
                 }
             }
         }
+        else if (msg.Content is DataBlock dataBlock)
+        {
+            // 添加 DataBlock 文本
+            if (!string.IsNullOrEmpty(dataBlock.Text))
+            {
+                parts.Add(new GeminiPart { Text = dataBlock.Text });
+            }
+            // 添加 DataBlock 多媒体来源
+            if (dataBlock.Sources != null)
+            {
+                foreach (var source in dataBlock.Sources)
+                {
+                    var part = ConvertSourceToGeminiPart(source);
+                    if (part != null)
+                    {
+                        parts.Add(part);
+                    }
+                }
+            }
+        }
         else
         {
             // 使用 GetTextContent 作为后备
@@ -260,6 +280,76 @@ public static class GeminiMessageConverter
         var data = dataUrl.Substring(commaIndex + 1);
 
         return (mimeType, data);
+    }
+
+    /// <summary>
+    /// 将 Source 转换为 GeminiPart
+    /// </summary>
+    private static GeminiPart? ConvertSourceToGeminiPart(Source source)
+    {
+        switch (source)
+        {
+            case URLSource { MimeType: var mime, Url: var url }
+                when mime?.StartsWith("image/") == true:
+                // 处理图片 URL（同现有 ConvertImageBlockToPart 策略）
+                if (url.StartsWith("data:"))
+                {
+                    var (mimeType, data) = ParseDataUrl(url);
+                    return new GeminiPart
+                    {
+                        InlineData = new GeminiInlineData
+                        {
+                            MimeType = mimeType,
+                            Data = data
+                        }
+                    };
+                }
+                return new GeminiPart { Text = $"[Image: {url}]" };
+
+            case Base64Source { MediaType: var mt, Data: var data }
+                when mt.StartsWith("image/"):
+                return new GeminiPart
+                {
+                    InlineData = new GeminiInlineData
+                    {
+                        MimeType = mt,
+                        Data = data
+                    }
+                };
+
+            case URLSource { MimeType: var mime, Url: var url }
+                when mime?.StartsWith("audio/") == true:
+                return new GeminiPart { Text = $"[Audio: {url}]" };
+
+            case Base64Source { MediaType: var mt, Data: var data }
+                when mt.StartsWith("audio/"):
+                return new GeminiPart
+                {
+                    InlineData = new GeminiInlineData
+                    {
+                        MimeType = mt,
+                        Data = data
+                    }
+                };
+
+            case URLSource { MimeType: var mime, Url: var url }
+                when mime?.StartsWith("video/") == true:
+                return new GeminiPart { Text = $"[Video: {url}]" };
+
+            case Base64Source { MediaType: var mt, Data: var data }
+                when mt.StartsWith("video/"):
+                return new GeminiPart
+                {
+                    InlineData = new GeminiInlineData
+                    {
+                        MimeType = mt,
+                        Data = data
+                    }
+                };
+
+            default:
+                return null;
+        }
     }
 
     /// <summary>

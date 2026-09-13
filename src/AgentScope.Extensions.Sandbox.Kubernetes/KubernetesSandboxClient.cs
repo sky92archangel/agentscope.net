@@ -14,6 +14,7 @@
 
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using AgentScope.Extensions.Sandbox.Kubernetes.Connector;
 
 namespace AgentScope.Extensions.Sandbox.Kubernetes;
 
@@ -29,10 +30,15 @@ public sealed class KubernetesSandboxClient : ISandboxClient
     };
 
     private readonly KubernetesSandboxClientOptions _options;
+    private readonly ISandboxConnectorStrategy _connector;
 
-    public KubernetesSandboxClient(KubernetesSandboxClientOptions? options = null)
+    /// <summary>使用选项与可选连接策略构造客户端。</summary>
+    public KubernetesSandboxClient(
+        KubernetesSandboxClientOptions? options = null,
+        ISandboxConnectorStrategy? connector = null)
     {
         _options = options ?? new KubernetesSandboxClientOptions();
+        _connector = connector ?? new PortForwardConnectorStrategy(_options.KubeConfigPath);
     }
 
     public Task<ISandbox> CreateAsync(WorkspaceSpec spec, CancellationToken ct = default)

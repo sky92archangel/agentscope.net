@@ -109,6 +109,31 @@ public enum ToolChoiceType
 }
 
 /// <summary>
+/// Anthropic prompt caching configuration.
+/// 对应 Java GenerateOptions 中 cacheControl(boolean) + cacheTtl 的组合语义。
+/// 启用后，
+/// 1) 系统消息上打 cache_control: ephemeral，
+/// 2) 最后一条内容块上打 cache_control: ephemeral，
+/// 3) 工具定义上打 cache_control: ephemeral（若有 TTL 则追加 cache_ttl）。
+/// </summary>
+public sealed class AnthropicPromptCacheConfig
+{
+    /// <summary>
+    /// Whether to enable prompt caching (adds cache_control: ephemeral).
+    /// 是否启用 prompt caching。
+    /// </summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>
+    /// Cache TTL (only applies to system prompt marker in Anthropic API).
+    /// When set, adds the TTL to the system block's cache_control.
+    /// Supported values: "5m", "1h", etc.
+    /// 缓存 TTL 持续时间（仅对系统消息块有效）。
+    /// </summary>
+    public string? CacheTtl { get; set; }
+}
+
+/// <summary>
 /// Tool choice configuration for LLM requests.
 /// 工具选择配置
 /// </summary>
@@ -223,6 +248,14 @@ public class GenerateOptions
     /// <summary>Reasoning effort level / 推理努力级别</summary>
     public string? ReasoningEffort { get; set; }
 
+    /// <summary>
+    /// Anthropic prompt caching configuration.
+    /// 对应 Java: GenerateOptions.cacheControl(boolean) + cacheTtl
+    /// Anthropic prompt caching：在系统消息、工具定义和最后内容块上打 cache_control: ephemeral 标记。
+    /// 注意：这不是响应缓存（CachePolicy），而是 Anthropic API 的 prompt caching 开关。
+    /// </summary>
+    public AnthropicPromptCacheConfig? PromptCaching { get; set; }
+
     /// <summary>Cache control policy / 缓存控制策略</summary>
     public Model.CachePolicy? CacheControl { get; set; }
 
@@ -271,6 +304,7 @@ public class GenerateOptions
             result.Seed = fallback.Seed;
             result.ThinkingBudget = fallback.ThinkingBudget;
             result.ReasoningEffort = fallback.ReasoningEffort;
+            result.PromptCaching = fallback.PromptCaching;
             result.CacheControl = fallback.CacheControl;
             result.ParallelToolCalls = fallback.ParallelToolCalls;
             result.ResponseFormat = fallback.ResponseFormat;
@@ -298,6 +332,7 @@ public class GenerateOptions
             if (primary.ThinkingBudget != null) result.ThinkingBudget = primary.ThinkingBudget;
             if (primary.ReasoningEffort != null) result.ReasoningEffort = primary.ReasoningEffort;
             if (primary.CacheControl != null) result.CacheControl = primary.CacheControl;
+            if (primary.PromptCaching != null) result.PromptCaching = primary.PromptCaching;
             if (primary.ParallelToolCalls != null) result.ParallelToolCalls = primary.ParallelToolCalls;
             if (primary.ResponseFormat != null) result.ResponseFormat = primary.ResponseFormat;
             if (primary.ToolChoice != null) result.ToolChoice = primary.ToolChoice;

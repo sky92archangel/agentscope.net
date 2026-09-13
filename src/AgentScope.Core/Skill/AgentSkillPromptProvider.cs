@@ -44,6 +44,12 @@ public class AgentSkillPromptProvider
     }
 
     /// <summary>
+    /// 获取所有已注册技能列表，供 DynamicSkillMiddleware 同步 SkillToolGroup 使用。
+    /// </summary>
+    public IReadOnlyCollection<RegisteredSkill> ListRegisteredSkills() =>
+        _registry.ListSkills();
+
+    /// <summary>
     /// Builds a markdown section describing each active skill's purpose and available tools.
     /// Returns an empty string when no skills are available.
     /// 生成技能说明段落（描述每个已激活技能的用途与可用工具）。

@@ -85,4 +85,34 @@ public static class GenAiAttributes
     /// Tool call ID attribute key
     /// </summary>
     public const string ToolCallId = "gen_ai.tool.call_id";
+
+    /// <summary>
+    /// 工具调用参数属性键（JSON 序列化）
+    /// Tool call arguments attribute key (JSON serialized)
+    /// </summary>
+    public const string ToolCallArguments = "gen_ai.tool.call.arguments";
+
+    /// <summary>
+    /// 工具调用结果状态属性键
+    /// Tool call result status attribute key
+    /// </summary>
+    public const string ToolCallResult = "gen_ai.tool.call.result";
+
+    /// <summary>
+    /// 缓存输入令牌用量属性键
+    /// Cached input tokens usage attribute key
+    /// </summary>
+    public const string UsageCachedInputTokens = "gen_ai.usage.cached_input_tokens";
+
+    /// <summary>
+    /// 缓存创建输入令牌用量属性键
+    /// Cache creation input tokens usage attribute key
+    /// </summary>
+    public const string UsageCacheCreationInputTokens = "gen_ai.usage.cache_creation_input_tokens";
+
+    /// <summary>
+    /// 回复 ID 属性键
+    /// Reply ID attribute key
+    /// </summary>
+    public const string ReplyId = "gen_ai.reply_id";
 }

@@ -70,6 +70,19 @@ public class AgentState
     public List<Msg> ContextMutable { get; set; } = [];
 
     /// <summary>
+    /// Gets or sets the asking state (JSON: tool name + arguments) when user confirmation is pending.
+    /// 正在等待用户确认的工具调用（工具名+参数 JSON）。用于 HITL 暂停-恢复。
+    /// 对应 Java: io.agentscope.core.state.AgentState.askingAction
+    /// </summary>
+    public string? AskingAction { get; set; }
+
+    /// <summary>
+    /// 是否被优雅关闭中断过（恢复时检查）。
+    /// 对应 Java: AgentState.shutdownInterrupted
+    /// </summary>
+    public bool? ShutdownInterrupted { get; set; }
+
+    /// <summary>
     /// Initializes a new instance of the <see cref="AgentState"/> class.
     /// 初始化 <see cref="AgentState"/> 类的新实例。
     /// </summary>

@@ -20,6 +20,7 @@ namespace AgentScope.Harness.Tool;
 public sealed class SkillManageTool(ISkillRepository skillRepo) : ITool
 {
     public string Name => "skill_manage";
+    public bool IsExternal => false;
     public string Description => "技能管理：列出、获取技能";
 
     public async Task<ToolResult> ExecuteAsync(Dictionary<string, object> parameters)

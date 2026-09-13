@@ -15,7 +15,6 @@
 using System.Collections.Generic;
 using AgentScope.Core.Formatter.Anthropic.Dto;
 using AgentScope.Core.Message;
-using GenerateOptions = AgentScope.Core.Formatter.GenerateOptions;
 
 namespace AgentScope.Core.Formatter.Anthropic;
 
@@ -28,7 +27,7 @@ public class AnthropicMultiAgentFormatter : AnthropicBaseFormatter
 {
     public AnthropicMultiAgentFormatter() { }
 
-    public override AnthropicRequest Format(List<Msg> messages, GenerateOptions? options = null)
+    public override AnthropicRequest Format(List<Msg> messages, global::AgentScope.Core.Formatter.GenerateOptions? options = null)
         => base.Format(PrefixAgentNames(messages), options);
 
     /// <summary>

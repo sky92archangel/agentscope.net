@@ -31,6 +31,7 @@ public sealed class TaskTool : ITool
     }
 
     public string Name => "task";
+    public bool IsExternal => false;
     public string Description => "管理会话任务：add(添加) / complete(完成) / list(列出)";
 
     public Task<ToolResult> ExecuteAsync(Dictionary<string, object> parameters)

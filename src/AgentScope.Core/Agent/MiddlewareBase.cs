@@ -34,6 +34,16 @@ namespace AgentScope.Core.Agent;
 public abstract class MiddlewareBase
 {
     /// <summary>
+    /// Gets the execution order of this middleware. Larger values run closer
+    /// to the outermost layer (executed first on the way in, last on the way out).
+    /// Middlewares with the same order keep registration order.
+    /// 对应 Java: io.agentscope.core.middleware.MiddlewareBase#order()
+    /// 中间件执行顺序：值越大越靠外层（进入时先执行，返回时后执行）；
+    /// 相同 Order 按注册顺序执行。
+    /// </summary>
+    public virtual int Order => 1;
+
+    /// <summary>
     /// Intercepts the system prompt construction phase.
     /// Allows modification of the system prompt before it is sent to the model.
     /// 拦截系统提示词构建阶段。

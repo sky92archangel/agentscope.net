@@ -245,6 +245,9 @@ public class EnhancedReActAgentStreamingTests
     /// </summary>
     private sealed class ScriptedModel : IModel
     {
+        // 默认不支持原生结构化输出（接口成员实现）
+        public bool SupportsNativeStructuredOutput => false;
+        public bool SupportsNativeStructuredOutputWithTools => false;
         private readonly Queue<string> _responses;
 
         public ScriptedModel(params string[] responses)
@@ -281,6 +284,9 @@ public class EnhancedReActAgentStreamingTests
     /// </summary>
     private sealed class StreamingScriptedModel : IModel, IStreamingChatModel
     {
+        // 默认不支持原生结构化输出（接口成员实现）
+        public bool SupportsNativeStructuredOutput => false;
+        public bool SupportsNativeStructuredOutputWithTools => false;
         private readonly IReadOnlyList<string> _chunks;
 
         public StreamingScriptedModel(params string[] chunks)
@@ -336,6 +342,9 @@ public class EnhancedReActAgentStreamingTests
     /// </summary>
     private sealed class FailingModel : IModel
     {
+        // 默认不支持原生结构化输出（接口成员实现）
+        public bool SupportsNativeStructuredOutput => false;
+        public bool SupportsNativeStructuredOutputWithTools => false;
         private readonly string _error;
 
         public FailingModel(string error)

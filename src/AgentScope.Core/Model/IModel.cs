@@ -91,6 +91,18 @@ public interface IModel
     /// 获取模型名称（例如 "gpt-4"、"claude-3-opus"、"deepseek-chat"）。
     /// </summary>
     string ModelName { get; }
+
+    /// <summary>
+    /// 模型是否支持原生结构化输出（JSON Schema 约束输出格式）。
+    /// 对应 Java: Model.supportsNativeStructuredOutput
+    /// </summary>
+    bool SupportsNativeStructuredOutput { get; }
+
+    /// <summary>
+    /// 模型是否支持原生结构化输出与工具调用并存。
+    /// 对应 Java: Model.supportsNativeStructuredOutputWithTools
+    /// </summary>
+    bool SupportsNativeStructuredOutputWithTools { get; }
     
     /// <summary>
     /// Generates a response using the reactive (observable) pattern.
@@ -158,6 +170,12 @@ public abstract class ModelBase : IModel
     {
         _modelName = modelName ?? throw new ArgumentNullException(nameof(modelName));
     }
+
+    /// <inheritdoc />
+    public virtual bool SupportsNativeStructuredOutput => false;
+
+    /// <inheritdoc />
+    public virtual bool SupportsNativeStructuredOutputWithTools => false;
 
     /// <inheritdoc />
     public abstract IObservable<ModelResponse> Generate(ModelRequest request);

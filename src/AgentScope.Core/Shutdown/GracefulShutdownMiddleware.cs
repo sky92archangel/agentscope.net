@@ -34,24 +34,74 @@ public class GracefulShutdownMiddleware : MiddlewareBase
     private readonly GracefulShutdownManager _manager;
 
     /// <summary>
+    /// The configuration for graceful shutdown.
+    /// 优雅关闭配置。
+    /// </summary>
+    private readonly GracefulShutdownConfig _config;
+
+    /// <summary>
     /// Initializes a new instance of the <see cref="GracefulShutdownMiddleware"/> class.
     /// 初始化 <see cref="GracefulShutdownMiddleware"/> 类的新实例。
     /// </summary>
     /// <param name="manager">Optional shutdown manager; defaults to the singleton instance. / 可选的关闭管理器；默认为单例实例。</param>
-    public GracefulShutdownMiddleware(GracefulShutdownManager? manager = null)
+    /// <param name="config">Optional shutdown config; defaults to GracefulShutdownConfig.Default. / 可选的关闭配置。</param>
+    public GracefulShutdownMiddleware(GracefulShutdownManager? manager = null, GracefulShutdownConfig? config = null)
     {
         _manager = manager ?? GracefulShutdownManager.Instance;
+        _config = config ?? GracefulShutdownConfig.Default;
     }
 
+    /// <summary>
+    /// 最外层中间件：Order = int.MaxValue 确保最先执行（进入时最先检查关闭状态）。
+    /// </summary>
+    public override int Order => int.MaxValue;
+
     /// <inheritdoc />
-    public override IAsyncEnumerable<Event> OnAgentAsync(
+    public override async IAsyncEnumerable<Event> OnAgentAsync(
         AgentInput input,
         Func<AgentInput, IAsyncEnumerable<Event>> next)
     {
         // 检查是否仍接受请求，拒绝则抛出 ShutdownException
-        // Ensure the system is still accepting requests; throws ShutdownException if shutting down
         _manager.EnsureAcceptingRequests();
-        return next(input);
+
+        // 构造 ActiveRequestContext
+        var agentName = input.Agent?.Name ?? input.Metadata?.GetValueOrDefault("agentName")?.ToString() ?? "unknown";
+        var sessionId = input.Metadata?.GetValueOrDefault("sessionId")?.ToString() ?? Guid.NewGuid().ToString("N");
+        var ctx = new ActiveRequestContext
+        {
+            RequestId = Guid.NewGuid().ToString("N"),
+            AgentName = agentName,
+            SessionId = sessionId,
+            StartTime = DateTime.UtcNow,
+            CancellationTokenSource = new CancellationTokenSource()
+        };
+
+        // 注册请求
+        _manager.RegisterRequest(ctx);
+
+        try
+        {
+            // 执行核心逻辑
+            await foreach (var ev in next(input))
+            {
+                yield return ev;
+            }
+        }
+        finally
+        {
+            // 检查是否被中断（超时或关闭触发）
+            if (_manager.WasShutdownInterrupted(ctx.AgentName, ctx.SessionId))
+            {
+                // 清除中断标记（已处理）
+                _manager.ClearShutdownInterrupted(ctx.AgentName, ctx.SessionId);
+            }
+
+            // 注销请求
+            _manager.UnregisterRequest(ctx.RequestId);
+
+            // 释放 CancellationTokenSource
+            ctx.CancellationTokenSource?.Dispose();
+        }
     }
 
     /// <inheritdoc />
@@ -59,8 +109,6 @@ public class GracefulShutdownMiddleware : MiddlewareBase
         ReasoningInput input,
         Func<ReasoningInput, Task<ReasoningInput>> next)
     {
-        // 推理阶段同样检查关闭状态
-        // Check shutdown status during the reasoning phase as well
         _manager.EnsureAcceptingRequests();
         return next(input);
     }
@@ -70,9 +118,33 @@ public class GracefulShutdownMiddleware : MiddlewareBase
         ActingInput input,
         Func<ActingInput, Task<ActingInput>> next)
     {
-        // 执行阶段检查关闭状态
-        // Check shutdown status during the acting phase
         _manager.EnsureAcceptingRequests();
         return next(input);
+    }
+
+    /// <inheritdoc />
+    public override async Task<ModelCallInput> OnModelCallAsync(
+        ModelCallInput input,
+        Func<ModelCallInput, Task<ModelCallInput>> next)
+    {
+        // 检查关闭状态
+        _manager.EnsureAcceptingRequests();
+
+        // 注入 PartialReasoningPolicy 到 Options 中，供模型调用层决策
+        // 不改变消息内容，仅传递策略信息
+        var options = input.Options ?? new Dictionary<string, object>();
+        if (!options.ContainsKey("partial_reasoning_policy"))
+        {
+            options["partial_reasoning_policy"] = _config.PartialReasoningPolicy.ToString();
+        }
+
+        var modifiedInput = new ModelCallInput
+        {
+            Messages = input.Messages,
+            Options = options,
+            Context = input.Context
+        };
+
+        return await next(modifiedInput).ConfigureAwait(false);
     }
 }

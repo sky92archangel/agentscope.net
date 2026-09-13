@@ -78,7 +78,9 @@ public static class AnthropicResponseParser
             InputTokens = response.Usage.InputTokens,
             OutputTokens = response.Usage.OutputTokens,
             TotalTokens = response.Usage.InputTokens + response.Usage.OutputTokens,
-            TimeSeconds = (DateTime.UtcNow - startTime).TotalSeconds
+            TimeSeconds = (DateTime.UtcNow - startTime).TotalSeconds,
+            CachedInputTokens = response.Usage.CacheReadInputTokens,
+            CacheCreationInputTokens = response.Usage.CacheCreationInputTokens
         };
 
         var chatResponse = new ChatResponse
@@ -190,7 +192,9 @@ public static class AnthropicResponseParser
                 Content = "",
                 Usage = new ChatUsage
                 {
-                    OutputTokens = streamEvent.Usage.OutputTokens
+                    OutputTokens = streamEvent.Usage.OutputTokens,
+                    CachedInputTokens = streamEvent.Usage.CacheReadInputTokens,
+                    CacheCreationInputTokens = streamEvent.Usage.CacheCreationInputTokens
                 }
             };
         }

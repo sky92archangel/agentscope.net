@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+using System.Collections.Generic;
 using System.Threading;
+using AgentScope.Core.Permission;
 
 namespace AgentScope.Core.Agent;
 
@@ -27,7 +29,8 @@ namespace AgentScope.Core.Agent;
 public record RuntimeContext(
     string? UserId,
     string? SessionId,
-    RuntimeContext? Parent = null)
+    RuntimeContext? Parent = null,
+    List<AdditionalWorkingDirectory>? AdditionalWorkingDirectories = null)
 {
     private static readonly AsyncLocal<RuntimeContext?> _current = new();
 
@@ -64,4 +67,19 @@ public record RuntimeContext(
     /// <param name="sessionId">The new session ID / 新的会话 ID</param>
     /// <returns>A new RuntimeContext with updated session ID / 更新了会话 ID 的新 RuntimeContext</returns>
     public RuntimeContext WithSessionId(string sessionId) => this with { SessionId = sessionId };
+
+    /// <summary>
+    /// Returns all working directories including paths from AdditionalWorkingDirectories.
+    /// 返回所有工作目录路径（含附加工作目录）。
+    /// </summary>
+    public IEnumerable<string> GetAllWorkingDirectories()
+    {
+        if (AdditionalWorkingDirectories != null)
+        {
+            foreach (var d in AdditionalWorkingDirectories)
+            {
+                yield return d.Path;
+            }
+        }
+    }
 }
